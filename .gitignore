@@ -9,10 +9,14 @@
 van_criekinge_unprocessed_1/
 
 # Pipeline output directories
-processed_markers_all_2/          # Step 1 output (779MB)
-fitted_smpl_all_3/                # Step 2 output (21MB)
-humanml3d_joints_4/               # Step 3 output (12MB)
-Comp_v6_KLD01/                    # Step 4 output (33MB)
+# Step 1 output (779MB)
+processed_markers_all_2/
+# Step 2 output (21MB)
+fitted_smpl_all_3/
+# Step 3 output (12MB)
+humanml3d_joints_4/    
+# Step 4 output (33MB)
+Comp_v6_KLD01/                    
 
 # SMPL body models (837MB - often proprietary/downloadable)
 smpl/
