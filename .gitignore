@@ -147,3 +147,9 @@ Desktop.ini
 # *.npz
 # *.npy
 # *.pkl
+
+# ----------------------------------------------------------------------------
+# Visualization Tool Outputs
+# ----------------------------------------------------------------------------
+# SMPL mesh visualization outputs (render_smpl_mesh.py)
+outputs/

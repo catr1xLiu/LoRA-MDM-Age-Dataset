@@ -57,6 +57,7 @@ The pipeline consists of 4 sequential processing steps. **Note:** This v2 pipeli
 |:-----|:--------|
 | `6_npz_motion_to_gif.py` | Interactive 3D matplotlib viewer (22-joint HumanML3D skeleton) |
 | `view_smpl_params.py` | SMPL parameter visualization (24-joint skeleton) |
+| `render_smpl_mesh.py` | High-quality 3D mesh video renderer (full SMPL body with skinning) |
 | `inspect_file.py` | View original C3D data as 3D plots |
 | `explore_c3d.py` | C3D structure exploration |
 | `debug.py` | SMPL shoulder joint verification |
@@ -122,6 +123,10 @@ python 6_npz_motion_to_gif.py
 
 # View SMPL parameters (24 joints)
 python view_smpl_params.py
+
+# Render high-quality 3D mesh video
+python3 render_smpl_mesh.py -s 01 -c 1  # Subject 01, Scene 1
+python3 render_smpl_mesh.py -s 02 -c 0 --model female  # With specific model
 
 # Inspect original C3D data
 python inspect_file.py
