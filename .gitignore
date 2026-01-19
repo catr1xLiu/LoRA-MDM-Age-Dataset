@@ -81,7 +81,6 @@ output.txt
 
 # Jupyter Notebook
 .ipynb_checkpoints
-*.ipynb
 
 # ----------------------------------------------------------------------------
 # IDE and Editor Files
