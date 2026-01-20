@@ -4,9 +4,17 @@ SMPL Mesh Visualization Script
 Renders SMPL body model with motion capture data to MP4 video.
 
 Usage:
+    # Basic usage - auto-detects GPU
     python3 render_smpl_mesh.py --subject 01 --scene 1
-    python3 render_smpl_mesh.py --subject 02 --scene 0 --model male
-    python3 render_smpl_mesh.py -s 01 -c 1 -m female
+
+    # Specify GPU manually (useful when multiple GPUs detected)
+    python3 render_smpl_mesh.py --subject 02 --scene 0 --gpu-id 1
+
+    # Use CPU-only rendering (OSMesa backend)
+    python3 render_smpl_mesh.py -s 01 -c 1 --backend osmesa
+
+    # Full example with all options
+    python3 render_smpl_mesh.py -s 138 -c 2 -m female --gpu-id 0 --fps 60
 """
 
 import os
@@ -18,14 +26,192 @@ import trimesh
 import pyrender
 import cv2
 from tqdm import tqdm
+import subprocess
+import re
+from pathlib import Path
 
 # Import our simple SMPL model
 from simple_smpl import SimpleSMPL
 
 
-def setup_renderer(width=1024, height=1024):
-    """Initialize offscreen renderer for headless environments."""
-    os.environ['PYOPENGL_PLATFORM'] = 'egl'  # For headless rendering
+def detect_gpus():
+    """
+    Detect available GPUs and return their information.
+
+    Returns:
+        list: List of dicts with 'id', 'device', 'vendor', 'model' keys
+    """
+    gpus = []
+    dri_path = Path('/dev/dri')
+
+    if not dri_path.exists():
+        return gpus
+
+    # Find all card devices
+    cards = sorted([c for c in dri_path.glob('card*') if c.name.startswith('card') and c.name[4:].isdigit()])
+
+    for card_idx, card in enumerate(cards):
+        gpu_info = {
+            'id': card_idx,
+            'device': str(card),
+            'vendor': 'Unknown',
+            'model': 'Unknown'
+        }
+
+        try:
+            # Get device information using udevadm
+            result = subprocess.run(
+                ['udevadm', 'info', '--query=all', f'--name={card}'],
+                capture_output=True,
+                text=True,
+                timeout=2
+            )
+
+            if result.returncode == 0:
+                output = result.stdout
+
+                # Extract PCI path
+                pci_match = re.search(r'ID_PATH=pci-(\S+)', output)
+                if pci_match:
+                    pci_path = pci_match.group(1)
+
+                    # Get GPU info from lspci
+                    lspci_result = subprocess.run(
+                        ['lspci', '-v', '-s', pci_path],
+                        capture_output=True,
+                        text=True,
+                        timeout=2
+                    )
+
+                    if lspci_result.returncode == 0:
+                        lspci_output = lspci_result.stdout
+
+                        # Parse vendor and model from VGA controller line
+                        vga_match = re.search(r'VGA compatible controller: (.+)', lspci_output)
+                        if vga_match:
+                            full_name = vga_match.group(1).strip()
+
+                            # Split vendor and model
+                            if 'NVIDIA' in full_name:
+                                gpu_info['vendor'] = 'NVIDIA'
+                                gpu_info['model'] = full_name.replace('NVIDIA Corporation', '').strip()
+                            elif 'AMD' in full_name or 'ATI' in full_name:
+                                gpu_info['vendor'] = 'AMD'
+                                # Clean up AMD naming
+                                model = re.sub(r'Advanced Micro Devices, Inc\.\s*\[AMD/ATI\]\s*', '', full_name)
+                                # Remove extra VGA controller info and revision details
+                                model = re.sub(r'\s*\(prog-if.*?\).*', '', model)
+                                model = re.sub(r'\s*\(rev.*?\).*', '', model)
+                                gpu_info['model'] = model.strip()
+                            elif 'Intel' in full_name:
+                                gpu_info['vendor'] = 'Intel'
+                                gpu_info['model'] = full_name.replace('Intel Corporation', '').strip()
+                            else:
+                                gpu_info['model'] = full_name
+
+        except (subprocess.TimeoutExpired, FileNotFoundError, Exception) as e:
+            # If detection fails, keep default 'Unknown' values
+            pass
+
+        gpus.append(gpu_info)
+
+    return gpus
+
+
+def select_gpu(gpus):
+    """
+    Prompt user to select a GPU from the available options.
+
+    Args:
+        gpus: List of GPU info dicts
+
+    Returns:
+        int: Selected GPU ID
+    """
+    print("\n" + "=" * 60)
+    print("Multiple GPUs detected. Please select one:")
+    print("=" * 60)
+
+    for gpu in gpus:
+        status = ""
+
+        # Check if GPU has working drivers by trying glxinfo
+        try:
+            result = subprocess.run(
+                ['glxinfo'],
+                capture_output=True,
+                text=True,
+                timeout=2,
+                env={**os.environ, 'DRI_PRIME': str(gpu['id'])}
+            )
+            if result.returncode == 0 and gpu['vendor'] in result.stdout:
+                status = " ✓ (drivers detected)"
+        except:
+            pass
+
+        print(f"  [{gpu['id']}] {gpu['vendor']} - {gpu['model']}{status}")
+        print(f"      Device: {gpu['device']}")
+
+    print("=" * 60)
+
+    while True:
+        try:
+            choice = input(f"Select GPU [0-{len(gpus)-1}]: ").strip()
+            gpu_id = int(choice)
+
+            if 0 <= gpu_id < len(gpus):
+                selected = gpus[gpu_id]
+                print(f"\nSelected: {selected['vendor']} - {selected['model']}")
+                return gpu_id
+            else:
+                print(f"Invalid choice. Please enter a number between 0 and {len(gpus)-1}")
+        except ValueError:
+            print("Invalid input. Please enter a number.")
+        except KeyboardInterrupt:
+            print("\n\nAborted by user.")
+            sys.exit(1)
+
+
+def setup_renderer(width=1024, height=1024, gpu_id=None, backend='egl'):
+    """
+    Initialize offscreen renderer for headless environments.
+
+    Args:
+        width: Render width in pixels
+        height: Render height in pixels
+        gpu_id: GPU device ID to use (None for auto-detection)
+        backend: Rendering backend ('egl' for GPU, 'osmesa' for CPU)
+    """
+    # Set rendering backend
+    os.environ['PYOPENGL_PLATFORM'] = backend
+
+    if backend == 'egl':
+        # Detect available GPUs
+        gpus = detect_gpus()
+
+        if len(gpus) == 0:
+            print("Warning: No GPU devices detected. Trying default EGL device...")
+        elif len(gpus) == 1:
+            # Only one GPU, use it automatically
+            gpu_id = 0
+            print(f"Using GPU: {gpus[0]['vendor']} - {gpus[0]['model']}")
+            os.environ['EGL_DEVICE_ID'] = str(gpu_id)
+        else:
+            # Multiple GPUs detected
+            if gpu_id is None:
+                # Prompt user to select
+                gpu_id = select_gpu(gpus)
+            elif gpu_id >= len(gpus):
+                print(f"Error: GPU ID {gpu_id} not found. Available GPUs: 0-{len(gpus)-1}")
+                sys.exit(1)
+            else:
+                # Use specified GPU
+                print(f"Using GPU: {gpus[gpu_id]['vendor']} - {gpus[gpu_id]['model']}")
+
+            os.environ['EGL_DEVICE_ID'] = str(gpu_id)
+    elif backend == 'osmesa':
+        print("Using OSMesa (CPU-only) rendering backend")
+
     renderer = pyrender.OffscreenRenderer(width, height)
     return renderer
 
@@ -349,6 +535,21 @@ Examples:
         help='Output video resolution (square, default: 1024)'
     )
 
+    parser.add_argument(
+        '--gpu-id',
+        type=int,
+        default=None,
+        help='GPU device ID to use (auto-detect if not specified)'
+    )
+
+    parser.add_argument(
+        '--backend',
+        type=str,
+        default='egl',
+        choices=['egl', 'osmesa'],
+        help='Rendering backend: egl (GPU) or osmesa (CPU-only). Default: egl'
+    )
+
     return parser.parse_args()
 
 
@@ -392,7 +593,7 @@ def main():
 
     # Setup renderer
     print("Setting up renderer...")
-    renderer = setup_renderer(args.resolution, args.resolution)
+    renderer = setup_renderer(args.resolution, args.resolution, gpu_id=args.gpu_id, backend=args.backend)
 
     # Determine number of frames to render
     if args.max_frames == 0:
