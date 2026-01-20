@@ -43,3 +43,62 @@ See `docs/` directory for detailed information:
 - **Tools/**: Visualization and debugging utilities
 
 Start with `docs/Dataset Overview.md` and `docs/1 VC Pipeline/Pipeline Overview.md` for context.
+
+## Environment Setup
+
+### Quick Start with Conda
+
+Create the conda environment from the provided `environment-v2.yml`:
+
+```bash
+conda env create -f environment-v2.yml
+conda activate mdm-data-pipeline
+```
+
+This installs ALL dependencies required by ALL scripts in this repository.
+
+### Dependencies Summary
+
+**Core Libraries (via conda/conda-forge):**
+- Python 3.10
+- numpy - Array operations
+- scipy - Scientific computing (spatial transforms, filtering)
+- matplotlib - Plotting and animations
+- opencv - Computer vision and video I/O
+- trimesh - 3D mesh processing
+- tqdm - Progress bars
+
+**PyTorch with CUDA 12.8 (via pip with extra index):**
+- torch==2.9.1+cu128
+- torchvision==0.24.1+cu128
+
+**Motion Capture & SMPL Libraries (via pip):**
+- c3d - C3D file format reading (used by 1_dataset_prep.py)
+- ezc3d - Alternative C3D reader (used by explore_c3d.py)
+- smplx - SMPL body model (used by 2_fit_smpl_markers.py, render_smpl_mesh.py)
+- pyrender - 3D mesh rendering (used by render_smpl_mesh.py, view_smpl_params.py)
+
+### System Dependencies
+
+No additional system libraries are required for basic C3D processing. However, for visualization and rendering:
+
+**Optional (for advanced visualization):**
+```bash
+# For headless 3D rendering support:
+sudo apt-get install libopengl0 libglvnd0 libglx0
+```
+
+**For video rendering (`render_smpl_mesh.py`):**
+```bash
+# OpenGL and rendering libraries
+sudo apt-get install freeglut3-dev libglew-dev libglfw3-dev
+```
+
+### SMPL Model Files
+
+The SMPL body models must be manually obtained and placed in the `smpl/` directory:
+- `SMPL_MALE.pkl`
+- `SMPL_FEMALE.pkl`
+- `SMPL_NEUTRAL.pkl`
+
+These can be obtained from the official SMPL website: https://smpl.is.tue.mpg.de/

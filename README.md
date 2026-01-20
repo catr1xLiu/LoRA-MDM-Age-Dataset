@@ -149,6 +149,51 @@ For detailed information about the marker fitting corrections and technical impl
 
 ---
 
+## Dependencies & Installation
+
+### Environment Setup (Recommended)
+
+Use the provided `environment-v2.yml` to create a conda environment with ALL dependencies:
+
+```bash
+conda env create -f environment.yml
+conda activate mdm-data-pipeline
+```
+
+This automatically installs:
+- Python 3.10
+- PyTorch 2.9.1 with CUDA 12.9
+- All core scientific libraries (numpy, scipy, matplotlib)
+- C3D file readers (c3d, ezc3d)
+- SMPL body model library (smplx)
+- 3D rendering tools (trimesh, pyrender, opencv)
+
+### System Libraries (Optional but recommended for visualization)
+
+For 3D rendering and visualization support:
+
+```bash
+# Basic rendering support
+sudo apt-get install libopengl0 libglvnd0 libglx0 # Debian/Ubuntu
+sudo dnf install libglvnd-opengl libglvnd-glx # RHEL/Fedora
+
+# Advanced 3D mesh rendering
+sudo apt-get install freeglut3-dev libglew-dev libglfw3-dev # Debian/Ubuntu
+sudo dnf install freeglut-devel glew-devel glfw-devel # RHEL/Fedora
+```
+
+### SMPL Body Models
+
+The SMPL body model files are required for `2_fit_smpl_markers.py` and `render_smpl_mesh.py`:
+
+1. Download from https://smpl.is.tue.mpg.de/
+2. Place in `smpl/` directory:
+   - `SMPL_MALE.pkl`
+   - `SMPL_FEMALE.pkl`
+   - `SMPL_NEUTRAL.pkl`
+
+---
+
 ## License
 
 Part of the LoRA-MDM project for motion diffusion modeling research.

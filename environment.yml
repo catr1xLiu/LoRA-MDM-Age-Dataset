@@ -1,0 +1,38 @@
+name: mdm-data-pipeline
+channels:
+  - conda-forge
+  - defaults
+  - nvidia
+dependencies:
+  # Python
+  - python=3.10
+  - chumpy=0.70
+  - pytorch-gpu
+  - torchvision
+  - torchaudio
+  # Core numerical libraries
+  - numpy
+  - scipy
+
+  # Visualization and plotting
+  - matplotlib
+  - opencv
+
+  # 3D mesh processing and rendering
+  - trimesh
+
+  # Progress bars
+  - tqdm
+
+  # Pip for PyTorch and specialized packages
+  - pip
+  - pip:
+    # Motion capture and C3D file processing
+    - c3d
+    - ezc3d
+
+    # SMPL body model
+    - smplx
+
+    # 3D rendering (for render_smpl_mesh.py, view_smpl_params.py)
+    - pyrender
