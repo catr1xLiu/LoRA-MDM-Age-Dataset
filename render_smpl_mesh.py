@@ -331,7 +331,7 @@ Examples:
     parser.add_argument(
         '--max-frames',
         type=int,
-        default=300,
+        default=3000,
         help='Maximum number of frames to render (default: 300, 0 for all)'
     )
 

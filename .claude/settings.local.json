@@ -11,7 +11,10 @@
       "Bash(tree:*)",
       "Bash(git checkout:*)",
       "Bash(./test_batch.sh:*)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "Bash(conda:*)",
+      "Bash(pkill:*)",
+      "WebSearch"
     ]
   }
 }
