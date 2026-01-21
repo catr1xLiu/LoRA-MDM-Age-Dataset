@@ -18,7 +18,8 @@
       "WebFetch(domain:www.open3d.org)",
       "Bash(lspci:*)",
       "WebFetch(domain:github.com)",
-      "Bash(EGL_DEVICE_ID=1 python3:*)"
+      "Bash(EGL_DEVICE_ID=1 python3:*)",
+      "Bash(grep:*)"
     ]
   }
 }

@@ -3,23 +3,17 @@
 # ============================================================================
 
 # ----------------------------------------------------------------------------
-# Large Data Directories (Pipeline Outputs and Raw Data)
+# Large Data Directory (All pipeline data and models)
 # ----------------------------------------------------------------------------
-# Raw C3D dataset (1.3GB)
-van_criekinge_unprocessed_1/
-
-# Pipeline output directories
-# Step 1 output (779MB)
-processed_markers_all_2/
-# Step 2 output (21MB)
-fitted_smpl_all_3/
-# Step 3 output (12MB)
-humanml3d_joints_4/    
-# Step 4 output (33MB)
-Comp_v6_KLD01/                    
-
-# SMPL body models (837MB - often proprietary/downloadable)
-smpl/
+# All data files including:
+#   - Raw C3D dataset (van_criekinge_unprocessed_1/)
+#   - Processed markers (processed_markers_all_2/)
+#   - SMPL fitted parameters (fitted_smpl_all_3/)
+#   - HumanML3D joints (humanml3d_joints_4/)
+#   - Motion features (Comp_v6_KLD01/)
+#   - SMPL body models (smpl/)
+#   - Visualization outputs (outputs/)
+data/
 
 # ----------------------------------------------------------------------------
 # Python
@@ -150,5 +144,4 @@ Desktop.ini
 # ----------------------------------------------------------------------------
 # Visualization Tool Outputs
 # ----------------------------------------------------------------------------
-# SMPL mesh visualization outputs (render_smpl_mesh.py)
-outputs/
+# (Now included in data/ directory above)

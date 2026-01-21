@@ -233,7 +233,7 @@ def load_data(subject, scene):
     subj_id = f"SUBJ{subject}"
 
     # Load shape parameters (betas) - constant for subject
-    betas_path = f'./fitted_smpl_all_3/{subj_id}/betas.npy'
+    betas_path = f'./data/fitted_smpl_all_3/{subj_id}/betas.npy'
 
     if not os.path.exists(betas_path):
         raise FileNotFoundError(f"Shape file not found: {betas_path}")
@@ -254,7 +254,7 @@ def load_data(subject, scene):
     # Load motion data (poses and translations)
     # Format: SUBJ1_0, SUBJ2_1, etc.
     subj_num = subject.lstrip('0') or '0'  # Remove leading zeros, '01' -> '1'
-    motion_path = f'./fitted_smpl_all_3/{subj_id}/SUBJ{subj_num}_{scene}_smpl_params.npz'
+    motion_path = f'./data/fitted_smpl_all_3/{subj_id}/SUBJ{subj_num}_{scene}_smpl_params.npz'
 
     if not os.path.exists(motion_path):
         raise FileNotFoundError(f"Motion file not found: {motion_path}")
@@ -312,9 +312,9 @@ def initialize_smpl_model(model_type='neutral'):
 
     # Map model type to file name
     model_files = {
-        'neutral': './smpl/SMPL_NEUTRAL.npz',
-        'male': './smpl/SMPL_MALE.npz',
-        'female': './smpl/SMPL_FEMALE.npz'
+        'neutral': './data/smpl/SMPL_NEUTRAL.npz',
+        'male': './data/smpl/SMPL_MALE.npz',
+        'female': './data/smpl/SMPL_FEMALE.npz'
     }
 
     if model_type.lower() not in model_files:
@@ -581,7 +581,7 @@ def main():
 
     except FileNotFoundError as e:
         print(f"\nError: {e}")
-        print("\nAvailable subjects can be found in: ./fitted_smpl_all_3/")
+        print("\nAvailable subjects can be found in: ./data/fitted_smpl_all_3/")
         sys.exit(1)
 
     # Initialize SMPL model

@@ -609,9 +609,12 @@ def subject_cache_paths(out_root, subject_id):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--processed_dir", required=True)
-    ap.add_argument("--models_dir", required=True)
-    ap.add_argument("--out_dir", required=True)
+    ap.add_argument("--processed_dir", required=True,
+                    help="Path to processed markers (typically data/processed_markers_all_2/)")
+    ap.add_argument("--models_dir", required=True,
+                    help="Path to SMPL models directory (typically data/smpl/ - see DATA.MD for download)")
+    ap.add_argument("--out_dir", required=True,
+                    help="Output directory for fitted SMPL parameters (typically data/fitted_smpl_all_3/)")
     ap.add_argument("--subject", default=None)
     ap.add_argument("--trial", default=None)
     ap.add_argument("--device", default="cpu", choices=["cpu", "cuda"])

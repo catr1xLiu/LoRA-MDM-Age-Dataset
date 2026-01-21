@@ -19,22 +19,26 @@ This is part of the LoRA-MDM motion diffusion model project. This repository spe
 
 ## Folder Structure
 
-### Pipeline Outputs
+### Data Directory
+
+All data files are stored in the `data/` directory (gitignored). See [DATA.MD](DATA.MD) for download instructions.
 
 | Folder | Description |
 |:-------|:------------|
-| `van_criekinge_unprocessed_1/` | Raw C3D dataset |
-| `processed_markers_all_2/` | Output of Step 1 (preprocessed C3D data) |
-| `fitted_smpl_all_3/` | Output of Step 2 (SMPL parameters) |
-| `humanml3d_joints_4/` | Output of Step 3 (joint positions) |
-| `Comp_v6_KLD01/` | Output of Step 4 (final HumanML3D format) |
+| `data/van_criekinge_unprocessed_1/` | Raw C3D dataset (download required) |
+| `data/processed_markers_all_2/` | Output of Step 1 (preprocessed C3D data) |
+| `data/fitted_smpl_all_3/` | Output of Step 2 (SMPL parameters) |
+| `data/humanml3d_joints_4/` | Output of Step 3 (joint positions) |
+| `data/Comp_v6_KLD01/` | Output of Step 4 (final HumanML3D format) |
+| `data/smpl/` | SMPL body models (download required) |
+| `data/outputs/` | Visualization outputs |
 
-### Supporting Folders
+### Code Folders
 
 | Folder | Description |
 |:-------|:------------|
-| `smpl/` | SMPL body models |
 | `utils/` | Utility functions |
+| `visualize_joints/` | Joint visualization utilities |
 
 ---
 
@@ -99,21 +103,29 @@ The processing pipeline follows these steps:
 
 ## Usage
 
-To process the Van Criekinge dataset:
+### Setup
+
+1. **Download required data** - See [DATA.MD](DATA.MD) for instructions on downloading:
+   - Raw Van Criekinge C3D motion capture dataset
+   - SMPL body models
+
+2. **Process the Van Criekinge dataset:**
 
 ```bash
 # Step 1: Preprocess C3D files
-python 1_dataset_prep.py
+python 1_dataset_prep.py --data_dir data/van_criekinge_unprocessed_1 --output_dir data/processed_markers_all_2
 
 # Step 2: Fit SMPL model (fixed version)
-python 2_fit_smpl_markers.py
+python 2_fit_smpl_markers.py --processed_dir data/processed_markers_all_2 --models_dir data/smpl --out_dir data/fitted_smpl_all_3
 
 # Step 3: Export HumanML3D joints
-python 3_export_humanml3d.py
+python 3_export_humanml3d.py --fits_dir data/fitted_smpl_all_3 --out_dir data/humanml3d_joints_4
 
 # Step 4: Create final feature representation
-python 4_motion_process.py
+python 4_motion_process.py --build_vc --vc_root data --vc_splits_dir splits/
 ```
+
+Run `python <script>.py --help` for detailed parameter documentation.
 
 To visualize results:
 
@@ -137,9 +149,10 @@ python inspect_file.py
 ## Requirements
 
 - Python 3.x
-- SMPL body models (in `smpl/` folder)
+- Van Criekinge dataset (see [DATA.MD](DATA.MD))
+- SMPL body models (see [DATA.MD](DATA.MD))
 - Dependencies for C3D processing, SMPL fitting, and visualization
-- See individual scripts for specific library requirements
+- See `environment.yml` for conda environment setup
 
 ---
 

@@ -58,8 +58,10 @@ def rot_to_align(u_src, f_src):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--fits_dir", required=True, help=".../data/smpl_fitted_smpl")
-    ap.add_argument("--out_dir", required=True, help=".../data/humanml3d")
+    ap.add_argument("--fits_dir", required=True,
+                    help="Path to fitted SMPL parameters (typically data/fitted_smpl_all_3/)")
+    ap.add_argument("--out_dir", required=True,
+                    help="Output directory for HumanML3D format joints (typically data/humanml3d_joints_4/)")
     ap.add_argument("--dst_fps", type=int, default=20)
     ap.add_argument("--subject", default=None)
     ap.add_argument("--trial", default=None)

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Verify that motion files in Comp_v6_KLD01/train have 263 dimensions.
+Verify that motion files in data/Comp_v6_KLD01/train have 263 dimensions.
 """
 
 import os
@@ -8,14 +8,14 @@ import numpy as np
 from glob import glob
 from collections import Counter
 
-def check_train_dimensions(base_path="dataset/HumanML3D/Comp_v6_KLD01/train/motions"):
+def check_train_dimensions(base_path="data/Comp_v6_KLD01/train/motions"):
     """
     Check all .npy files in the train/motions directory and report their dimensions.
     """
     
     if not os.path.exists(base_path):
         print(f"❌ Path not found: {base_path}")
-        print(f"   Please provide the correct path to Comp_v6_KLD01/train/motions")
+        print(f"   Please provide the correct path to data/Comp_v6_KLD01/train/motions")
         return
     
     # Find all .npy files recursively
@@ -85,8 +85,8 @@ if __name__ == "__main__":
     import argparse
     
     parser = argparse.ArgumentParser(description="Check motion file dimensions")
-    parser.add_argument("--path", type=str, 
-                       default="dataset/HumanML3D/Comp_v6_KLD01/train/motions",
+    parser.add_argument("--path", type=str,
+                       default="data/Comp_v6_KLD01/train/motions",
                        help="Path to the motions directory")
     
     args = parser.parse_args()

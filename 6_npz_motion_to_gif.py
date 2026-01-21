@@ -15,9 +15,9 @@ python reconstruct_gif.py --input data/humanml3d/SUBJ01/SUBJ1_0_humanml3d_22join
 python reconstruct_gif.py --input data/humanml3d/SUBJ01/SUBJ1_0_humanml3d_22joints.npz --output correct_walk.gif --use_trajectory
 """
 
-# python 6_npz_motion_to_gif.py --input Comp_v6_KLD01/SUBJ01/SUBJ1_1_humanml3d_22joints.npz --use_trajectory
+# python 6_npz_motion_to_gif.py --input data/Comp_v6_KLD01/SUBJ01/SUBJ1_1_humanml3d_22joints.npz --use_trajectory
 
-# python 6_npz_motion_to_gif.py --input Comp_v6_KLD01/SUBJ01/SUBJ1_1_humanml3d_22joints.npz --use_trajectory
+# python 6_npz_motion_to_gif.py --input data/Comp_v6_KLD01/SUBJ01/SUBJ1_1_humanml3d_22joints.npz --use_trajectory
 
 import numpy as np
 import matplotlib.pyplot as plt

@@ -15,9 +15,8 @@ Van Criekinge → processed markers for SMPL fitting (and HumanML3D later)
 """
 
 import sys
-META_DIR = "/u1/khabashy/LoRA-MDM/data/van_criekinge"
-if META_DIR not in sys.path:
-    sys.path.insert(0, META_DIR)
+# Import metadata from the local data directory
+sys.path.insert(0, "./data")
 
 from van_criekinge_unprocessed_1.metadata import create_able_bodied_metadata, create_stroke_metadata
 
@@ -529,8 +528,10 @@ class VanCriekingeDatasetPreprocessor:
 def main():
     import argparse
     p = argparse.ArgumentParser(description="Process Van Criekinge C3D to SMPL-ready markers")
-    p.add_argument('--data_dir', required=True, type=str, help='Path to raw van_criekinge data')
-    p.add_argument('--output_dir', required=True, type=str, help='Path to save processed data')
+    p.add_argument('--data_dir', required=True, type=str,
+                   help='Path to raw van_criekinge data (download from Figshare - see DATA.MD)')
+    p.add_argument('--output_dir', required=True, type=str,
+                   help='Path to save processed data (typically data/processed_markers_all_2/)')
     p.add_argument('--subjects', nargs='*', default=None, help='Subjects to process (e.g., SUBJ01 SUBJ02)')
     p.add_argument('--test_run', action='store_true', help='Process first 3 subjects only')
     p.add_argument('--min_valid_ratio', type=float, default=0.5, help='Frame keep threshold')

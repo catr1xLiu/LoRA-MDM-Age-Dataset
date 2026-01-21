@@ -796,17 +796,17 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Build VC datasets or process a single HumanML3D NPZ file.")
     parser.add_argument("--build_vc", action="store_true",
                         help="Convert VC joints to HumanML3D features using provided split files.")
-    parser.add_argument("--vc_root", type=str, default="dataset/HumanML3D",
-                        help="Root directory that contains Comp_v6_KLD01.")
+    parser.add_argument("--vc_root", type=str, default="data",
+                        help="Root directory that contains Comp_v6_KLD01 (typically data/)")
     parser.add_argument("--vc_splits_dir", type=str,
-                        help="Directory containing {train,val,test}.txt listing relative NPZ paths.")
+                        help="Directory containing {train,val,test}.txt listing relative NPZ paths (e.g., splits/)")
     parser.add_argument("--add_vc_ages_text", action="store_true",
                         help="Create/overwrite ages/ and texts/ (placeholder) for an existing VC conversion.")
     parser.add_argument("--vc_base", type=str,
-                        help="Base path of an already converted VC dataset (e.g. .../data/humanml3d/van_criekinge).")
+                        help="Base path of an already converted VC dataset (typically data/Comp_v6_KLD01/)")
     parser.add_argument("--vc_meta_py", type=str,
-                        default="/u1/khabashy/LoRA-MDM/data/van_criekinge/metadata.py",
-                        help="Path to metadata.py containing subject ages.")
+                        default="data/van_criekinge_unprocessed_1/metadata.py",
+                        help="Path to metadata.py containing subject ages (typically data/van_criekinge_unprocessed_1/metadata.py)")
 
     parser.add_argument("--input_npz", type=str, help="Path to the input *_humanml3d_22joints.npz file.")
     parser.add_argument("--output_features_npy", type=str, help="Path to save the output features NPY file.")
