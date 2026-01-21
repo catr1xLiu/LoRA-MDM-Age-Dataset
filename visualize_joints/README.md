@@ -22,7 +22,16 @@ Download [SMPL Female and Male](https://smpl.is.tue.mpg.de/) and [SMPL Netural](
     	└-- SMPL_FEMALE.pkl
 		└-- SMPL_MALE.pkl
 		└-- SMPL_NEUTRAL.pkl
-   ```   
+   ```
+
+**Note:** If you already have SMPL models in `data/smpl/smpl/` (from the main pipeline), you can create a symlink instead of downloading again:
+```bash
+# Remove the placeholder directory
+rm -rf smpl_models/smpl
+
+# Create symlink to shared SMPL models
+ln -s ../../data/smpl/smpl smpl_models/smpl
+```   
 
 ## Demo
 ### Demo for sequences

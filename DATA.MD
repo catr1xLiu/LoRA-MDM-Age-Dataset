@@ -198,26 +198,6 @@ Expected output should show the `van_criekinge_unprocessed_1/` and `smpl/` direc
 | Comp_v6_KLD01 | ~33MB | Generated |
 | **Total** | **~3GB** | **~2.1GB raw + ~845MB generated** |
 
-## SMPL Models for visualize_joints
-
-The `visualize_joints/` directory (used for joints-to-SMPL mesh fitting) also requires SMPL models. After downloading SMPL models to `data/smpl/`, you have two options:
-
-**Option 1: Create a symlink (recommended)**
-```bash
-# Remove the placeholder directory
-rm -rf visualize_joints/smpl_models/smpl
-
-# Create symlink to shared SMPL models
-ln -s ../../data/smpl/smpl visualize_joints/smpl_models/smpl
-```
-
-**Option 2: Copy the models**
-```bash
-cp data/smpl/smpl/* visualize_joints/smpl_models/smpl/
-```
-
-The symlink approach saves ~837MB of disk space by sharing models between the main pipeline and visualization tools.
-
 ## Additional Notes
 
 - All data directories are gitignored to keep the repository clean
