@@ -14,11 +14,9 @@ Usage:
     # Specify GPU manually
     python3 render_smpl_mesh_live.py -s 01 -c 2 --gpu-id 1
 
-    # CPU-only rendering (OSMesa)
-    python3 render_smpl_mesh_live.py -s 01 -c 2 --gpu-id mesa
-
 Controls:
-    Slider:         Frame scrubbing (auto-pauses)
+    Frame Slider:   Frame scrubbing (auto-pauses)
+    Beta Slider:    Adjust body shape (uniform betas, -10 to +10, affects "fatness")
     Play/Pause:     Toggle animation playback
     Left/Right:     Rotate camera horizontally (azimuth ±15°)
     Up/Down:        Tilt camera vertically (elevation ±10°, range: -20° to 80°)
@@ -120,16 +118,16 @@ def detect_gpus():
 
 def select_gpu(gpus):
     """
-    Prompt user to select a GPU from the available options, including OSMesa.
+    Prompt user to select a GPU from the available options.
 
     Args:
         gpus: List of GPU info dicts
 
     Returns:
-        tuple: (gpu_id or None, backend) - gpu_id is int for EGL, None for OSMesa
+        int: Selected GPU ID
     """
     print("\n" + "=" * 60)
-    print("Available rendering devices:")
+    print("Multiple GPUs detected. Please select one:")
     print("=" * 60)
 
     for gpu in gpus:
@@ -152,26 +150,20 @@ def select_gpu(gpus):
         print(f"  [{gpu['id']}] {gpu['vendor']} - {gpu['model']}{status}")
         print(f"      Device: {gpu['device']}")
 
-    print(f"  [mesa] OSMesa (CPU-only software rendering)")
     print("=" * 60)
 
     while True:
         try:
-            choice = input(f"Select device [0-{len(gpus)-1} or 'mesa']: ").strip().lower()
-
-            if choice == 'mesa':
-                print("\nSelected: OSMesa (CPU-only)")
-                return None, 'osmesa'
-
+            choice = input(f"Select GPU [0-{len(gpus)-1}]: ").strip()
             gpu_id = int(choice)
             if 0 <= gpu_id < len(gpus):
                 selected = gpus[gpu_id]
                 print(f"\nSelected: {selected['vendor']} - {selected['model']}")
-                return gpu_id, 'egl'
+                return gpu_id
             else:
-                print(f"Invalid choice. Please enter a number between 0 and {len(gpus)-1}, or 'mesa'")
+                print(f"Invalid choice. Please enter a number between 0 and {len(gpus)-1}")
         except ValueError:
-            print("Invalid input. Please enter a number or 'mesa'.")
+            print("Invalid input. Please enter a number.")
         except KeyboardInterrupt:
             print("\n\nAborted by user.")
             sys.exit(1)
@@ -186,10 +178,10 @@ def parse_arguments():
 Examples:
   python3 render_smpl_mesh_live.py --subject 01 --scene 2
   python3 render_smpl_mesh_live.py -s 02 -c 0 -m male --gpu-id 1
-  python3 render_smpl_mesh_live.py -s 01 -c 2 --gpu-id mesa
 
 Controls:
-  Slider:         Frame scrubbing (auto-pauses)
+  Frame Slider:   Frame scrubbing (auto-pauses)
+  Beta Slider:    Adjust body shape (-10 to +10, uniform "fatness")
   Play/Pause:     Toggle animation playback
   Left/Right:     Rotate camera horizontally (azimuth ±15°)
   Up/Down:        Tilt camera vertically (elevation ±10°)
@@ -237,9 +229,9 @@ Controls:
 
     parser.add_argument(
         '--gpu-id',
-        type=str,
+        type=int,
         default=None,
-        help='GPU device ID (0, 1, ...) or "mesa" for CPU rendering. Prompts if not specified.'
+        help='GPU device ID (0, 1, ...). Prompts if multiple GPUs detected and not specified.'
     )
 
     parser.add_argument(
@@ -252,67 +244,52 @@ Controls:
     return parser.parse_args()
 
 
-def setup_rendering_backend(gpu_id_arg):
+def setup_rendering_backend(gpu_id=None):
     """
-    Setup the rendering backend based on user input or interactive selection.
+    Setup the EGL rendering backend with GPU selection.
 
     Args:
-        gpu_id_arg: The --gpu-id argument value (str or None)
+        gpu_id: GPU device ID to use (None for auto-detection)
 
     Returns:
-        tuple: (backend, gpu_id) where backend is 'egl' or 'osmesa'
+        int or None: Selected GPU ID (None if using default EGL device)
     """
-    # Handle explicit mesa selection
-    if gpu_id_arg is not None and gpu_id_arg.lower() == 'mesa':
-        os.environ['PYOPENGL_PLATFORM'] = 'osmesa'
-        print("Using OSMesa (CPU-only) rendering backend")
-        return 'osmesa', None
+    # Always use EGL backend
+    os.environ['PYOPENGL_PLATFORM'] = 'egl'
 
     # Detect available GPUs
     gpus = detect_gpus()
 
     if len(gpus) == 0:
-        print("Warning: No GPU devices detected.")
-        print("Using OSMesa (CPU-only) rendering backend")
-        os.environ['PYOPENGL_PLATFORM'] = 'osmesa'
-        return 'osmesa', None
+        print("Warning: No GPU devices detected. Trying default EGL device...")
+        return None
 
-    # Handle explicit GPU ID selection
-    if gpu_id_arg is not None:
-        try:
-            gpu_id = int(gpu_id_arg)
-            if gpu_id >= len(gpus):
-                print(f"Error: GPU ID {gpu_id} not found. Available GPUs: 0-{len(gpus)-1}")
-                sys.exit(1)
-            print(f"Using GPU: {gpus[gpu_id]['vendor']} - {gpus[gpu_id]['model']}")
-            os.environ['PYOPENGL_PLATFORM'] = 'egl'
-            os.environ['EGL_DEVICE_ID'] = str(gpu_id)
-            return 'egl', gpu_id
-        except ValueError:
-            print(f"Error: Invalid --gpu-id value: {gpu_id_arg}")
-            print("Use a number (0, 1, ...) or 'mesa' for CPU rendering")
-            sys.exit(1)
-
-    # Interactive selection if only one GPU
     if len(gpus) == 1:
+        # Only one GPU, use it automatically
         gpu_id = 0
         print(f"Using GPU: {gpus[0]['vendor']} - {gpus[0]['model']}")
-        os.environ['PYOPENGL_PLATFORM'] = 'egl'
         os.environ['EGL_DEVICE_ID'] = str(gpu_id)
-        return 'egl', gpu_id
+        return gpu_id
 
-    # Multiple GPUs - prompt user
-    gpu_id, backend = select_gpu(gpus)
-    os.environ['PYOPENGL_PLATFORM'] = backend
-    if gpu_id is not None:
-        os.environ['EGL_DEVICE_ID'] = str(gpu_id)
-    return backend, gpu_id
+    # Multiple GPUs detected
+    if gpu_id is None:
+        # Prompt user to select
+        gpu_id = select_gpu(gpus)
+    elif gpu_id >= len(gpus):
+        print(f"Error: GPU ID {gpu_id} not found. Available GPUs: 0-{len(gpus)-1}")
+        sys.exit(1)
+    else:
+        # Use specified GPU
+        print(f"Using GPU: {gpus[gpu_id]['vendor']} - {gpus[gpu_id]['model']}")
+
+    os.environ['EGL_DEVICE_ID'] = str(gpu_id)
+    return gpu_id
 
 
 # Parse arguments and setup backend FIRST, before any imports that depend on PYOPENGL_PLATFORM
 if __name__ == '__main__':
     _args = parse_arguments()
-    _backend, _gpu_id = setup_rendering_backend(_args.gpu_id)
+    _gpu_id = setup_rendering_backend(_args.gpu_id)
 
 
 # Now import everything else (pyrender will pick up the env var)
@@ -328,14 +305,13 @@ from matplotlib.animation import FuncAnimation
 from simple_smpl import SimpleSMPL
 
 
-def setup_renderer_live(width=1024, height=1024, backend='egl'):
+def setup_renderer_live(width=1024, height=1024):
     """
     Initialize offscreen renderer for live viewing.
 
     Args:
         width: Render width in pixels
         height: Render height in pixels
-        backend: Rendering backend ('egl' for GPU, 'osmesa' for CPU)
 
     Returns:
         pyrender.OffscreenRenderer instance
@@ -345,11 +321,8 @@ def setup_renderer_live(width=1024, height=1024, backend='egl'):
         return renderer
     except Exception as e:
         print(f"Renderer initialization failed: {e}")
-        if backend == 'egl':
-            print("\nTip: Try running with --gpu-id mesa for CPU-only rendering")
-        print("\nEnsure pyrender dependencies are installed:")
-        print("  pip install pyopengl PyOpenGL_accelerate")
-        print("  sudo dnf install mesa-libOSMesa-devel  # Fedora")
+        print("\nEnsure EGL/OpenGL dependencies are installed and GPU drivers are working.")
+        print("On headless servers, ensure libEGL is available.")
         sys.exit(1)
 
 
@@ -485,7 +458,7 @@ def create_floor_mesh():
     ])
 
     floor_mesh = trimesh.Trimesh(vertices=floor_vertices, faces=floor_faces)
-    floor_mesh.visual.vertex_colors = [200, 200, 200, 100]  # Light gray, semi-transparent
+    floor_mesh.visual.vertex_colors = [100, 100, 200, 100]  # Light gray, semi-transparent
 
     return pyrender.Mesh.from_trimesh(floor_mesh, smooth=False)
 
@@ -609,7 +582,7 @@ def render_frame_with_camera(smpl_model, betas, pose, transl, renderer,
     return color
 
 
-def main(args, backend):
+def main(args):
     """Main interactive visualization loop."""
     print("=" * 60)
     print("SMPL Mesh Live Visualization")
@@ -618,7 +591,6 @@ def main(args, backend):
     print(f"Scene: {args.scene}")
     print(f"Model: {args.model}")
     print(f"Resolution: {args.resolution}x{args.resolution}")
-    print(f"Backend: {backend.upper()}")
     print("=" * 60)
 
     # Load data
@@ -652,10 +624,7 @@ def main(args, backend):
 
     # Setup renderer
     print("Setting up renderer...")
-    renderer = setup_renderer_live(
-        args.resolution, args.resolution,
-        backend=backend
-    )
+    renderer = setup_renderer_live(args.resolution, args.resolution)
 
     # Downsample frames if requested
     poses = poses[::args.downsample]
@@ -668,7 +637,7 @@ def main(args, backend):
 
     # Setup matplotlib figure
     fig, ax = plt.subplots(figsize=(10, 10))
-    plt.subplots_adjust(bottom=0.15)
+    plt.subplots_adjust(bottom=0.20)  # More space for two sliders
     ax.axis('off')
     ax.set_title('SMPL Mesh Viewer (Arrow keys: rotate, Scroll: zoom, Space: pause)')
 
@@ -679,13 +648,15 @@ def main(args, backend):
         'anim': None,
         'camera_azimuth': 0,
         'camera_elevation': 15,
-        'cam_distance': 3.0  # Closer default for better visibility
+        'cam_distance': 3.0,  # Closer default for better visibility
+        'beta_value': 0.0,  # Uniform beta value for all 10 shape params
+        'betas': betas.clone()  # Mutable copy of betas
     }
 
     # Pre-render first frame
     print("Rendering first frame...")
     initial_frame = render_frame_with_camera(
-        smpl_model, betas, poses[0], trans[0], renderer,
+        smpl_model, ui_state['betas'], poses[0], trans[0], renderer,
         ui_state['camera_azimuth'],
         ui_state['camera_elevation'],
         ui_state['cam_distance']
@@ -696,7 +667,7 @@ def main(args, backend):
     def update_visuals(frame_idx):
         """Render and display a specific frame."""
         frame_rgb = render_frame_with_camera(
-            smpl_model, betas, poses[frame_idx], trans[frame_idx], renderer,
+            smpl_model, ui_state['betas'], poses[frame_idx], trans[frame_idx], renderer,
             ui_state['camera_azimuth'],
             ui_state['camera_elevation'],
             ui_state['cam_distance']
@@ -704,7 +675,7 @@ def main(args, backend):
         img_display.set_data(frame_rgb)
         ax.set_title(f'Frame {frame_idx * args.downsample} / {total_frames * args.downsample - 1} | '
                      f'Az: {ui_state["camera_azimuth"]}° El: {ui_state["camera_elevation"]}° '
-                     f'Dist: {ui_state["cam_distance"]:.1f}')
+                     f'Dist: {ui_state["cam_distance"]:.1f} | Beta: {ui_state["beta_value"]:.1f}')
 
     # Animation frame callback
     def on_frame(frame):
@@ -712,9 +683,9 @@ def main(args, backend):
             return [img_display]
 
         ui_state['frame'] = frame
-        slider.eventson = False
-        slider.set_val(frame)
-        slider.eventson = True
+        frame_slider.eventson = False
+        frame_slider.set_val(frame)
+        frame_slider.eventson = True
 
         update_visuals(frame)
         return [img_display]
@@ -755,12 +726,12 @@ def main(args, backend):
     fig.canvas.mpl_connect('key_press_event', on_key)
     fig.canvas.mpl_connect('scroll_event', on_scroll)
 
-    # Slider widget
-    ax_slider = plt.axes([0.2, 0.05, 0.55, 0.03])
-    slider = Slider(ax_slider, 'Frame', 0, total_frames - 1, valinit=0, valfmt='%d')
+    # Frame slider widget
+    ax_frame_slider = plt.axes([0.2, 0.10, 0.55, 0.03])
+    frame_slider = Slider(ax_frame_slider, 'Frame', 0, total_frames - 1, valinit=0, valfmt='%d')
 
-    def update_slider(val):
-        frame = int(slider.val)
+    def update_frame_slider(val):
+        frame = int(frame_slider.val)
         ui_state['frame'] = frame
         ui_state['paused'] = True
         button.label.set_text("Play")
@@ -770,10 +741,25 @@ def main(args, backend):
         update_visuals(frame)
         fig.canvas.draw_idle()
 
-    slider.on_changed(update_slider)
+    frame_slider.on_changed(update_frame_slider)
+
+    # Beta slider widget (uniform body shape - "fatness")
+    ax_beta_slider = plt.axes([0.2, 0.05, 0.55, 0.03])
+    beta_slider = Slider(ax_beta_slider, 'Beta', -10.0, 10.0, valinit=0.0, valfmt='%.1f')
+
+    def update_beta_slider(val):
+        beta_val = beta_slider.val
+        ui_state['beta_value'] = beta_val
+        # Set all 10 beta values to the same uniform value
+        ui_state['betas'] = torch.full((1, 10), beta_val, dtype=torch.float32)
+
+        update_visuals(ui_state['frame'])
+        fig.canvas.draw_idle()
+
+    beta_slider.on_changed(update_beta_slider)
 
     # Play/Pause button
-    ax_button = plt.axes([0.8, 0.05, 0.1, 0.04])
+    ax_button = plt.axes([0.8, 0.10, 0.1, 0.04])
     button = Button(ax_button, 'Pause')
 
     def toggle_pause(event):
@@ -797,7 +783,8 @@ def main(args, backend):
     print("  Up/Down arrows:    Tilt camera vertically (elevation ±10°)")
     print("  Scroll Up/Down:    Zoom in/out (distance ±0.5)")
     print("  Spacebar:          Play/Pause toggle")
-    print("  Slider:            Seek to specific frame")
+    print("  Frame Slider:      Seek to specific frame")
+    print("  Beta Slider:       Adjust body shape (-10 to +10, uniform 'fatness')")
 
     anim = FuncAnimation(
         fig, on_frame,
@@ -819,5 +806,5 @@ def main(args, backend):
 
 
 if __name__ == '__main__':
-    # _args and _backend were already set at module level
-    main(_args, _backend)
+    # _args and _gpu_id were already set at module level
+    main(_args)

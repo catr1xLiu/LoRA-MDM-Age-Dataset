@@ -10,9 +10,6 @@ Usage:
     # Specify GPU manually (useful when multiple GPUs detected)
     python3 render_smpl_mesh.py --subject 02 --scene 0 --gpu-id 1
 
-    # Use CPU-only rendering (OSMesa backend)
-    python3 render_smpl_mesh.py -s 01 -c 1 --backend osmesa
-
     # Full example with all options
     python3 render_smpl_mesh.py -s 138 -c 2 -m female --gpu-id 0 --fps 60
 """
@@ -71,7 +68,7 @@ def detect_gpus():
                 output = result.stdout
 
                 # Extract PCI path
-                pci_match = re.search(r'ID_PATH=pci-(\S+)', output)
+                pci_match = re.search(r'ID_PATH=pci-([\S]+)', output)
                 if pci_match:
                     pci_path = pci_match.group(1)
 
@@ -99,7 +96,6 @@ def detect_gpus():
                                 gpu_info['vendor'] = 'AMD'
                                 # Clean up AMD naming
                                 model = re.sub(r'Advanced Micro Devices, Inc\.\s*\[AMD/ATI\]\s*', '', full_name)
-                                # Remove extra VGA controller info and revision details
                                 model = re.sub(r'\s*\(prog-if.*?\).*', '', model)
                                 model = re.sub(r'\s*\(rev.*?\).*', '', model)
                                 gpu_info['model'] = model.strip()
@@ -109,7 +105,7 @@ def detect_gpus():
                             else:
                                 gpu_info['model'] = full_name
 
-        except (subprocess.TimeoutExpired, FileNotFoundError, Exception) as e:
+        except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
             # If detection fails, keep default 'Unknown' values
             pass
 
@@ -145,8 +141,8 @@ def select_gpu(gpus):
                 env={**os.environ, 'DRI_PRIME': str(gpu['id'])}
             )
             if result.returncode == 0 and gpu['vendor'] in result.stdout:
-                status = " ✓ (drivers detected)"
-        except:
+                status = " [drivers OK]"
+        except Exception:
             pass
 
         print(f"  [{gpu['id']}] {gpu['vendor']} - {gpu['model']}{status}")
@@ -158,7 +154,6 @@ def select_gpu(gpus):
         try:
             choice = input(f"Select GPU [0-{len(gpus)-1}]: ").strip()
             gpu_id = int(choice)
-
             if 0 <= gpu_id < len(gpus):
                 selected = gpus[gpu_id]
                 print(f"\nSelected: {selected['vendor']} - {selected['model']}")
@@ -172,48 +167,67 @@ def select_gpu(gpus):
             sys.exit(1)
 
 
-def setup_renderer(width=1024, height=1024, gpu_id=None, backend='egl'):
+def setup_rendering_backend(gpu_id=None):
     """
-    Initialize offscreen renderer for headless environments.
+    Setup the EGL rendering backend with GPU selection.
+
+    Args:
+        gpu_id: GPU device ID to use (None for auto-detection)
+
+    Returns:
+        int or None: Selected GPU ID (None if using default EGL device)
+    """
+    # Always use EGL backend
+    os.environ['PYOPENGL_PLATFORM'] = 'egl'
+
+    # Detect available GPUs
+    gpus = detect_gpus()
+
+    if len(gpus) == 0:
+        print("Warning: No GPU devices detected. Trying default EGL device...")
+        return None
+
+    if len(gpus) == 1:
+        # Only one GPU, use it automatically
+        gpu_id = 0
+        print(f"Using GPU: {gpus[0]['vendor']} - {gpus[0]['model']}")
+        os.environ['EGL_DEVICE_ID'] = str(gpu_id)
+        return gpu_id
+
+    # Multiple GPUs detected
+    if gpu_id is None:
+        # Prompt user to select
+        gpu_id = select_gpu(gpus)
+    elif gpu_id >= len(gpus):
+        print(f"Error: GPU ID {gpu_id} not found. Available GPUs: 0-{len(gpus)-1}")
+        sys.exit(1)
+    else:
+        # Use specified GPU
+        print(f"Using GPU: {gpus[gpu_id]['vendor']} - {gpus[gpu_id]['model']}")
+
+    os.environ['EGL_DEVICE_ID'] = str(gpu_id)
+    return gpu_id
+
+
+def setup_renderer(width=1024, height=1024):
+    """
+    Initialize offscreen renderer.
 
     Args:
         width: Render width in pixels
         height: Render height in pixels
-        gpu_id: GPU device ID to use (None for auto-detection)
-        backend: Rendering backend ('egl' for GPU, 'osmesa' for CPU)
+
+    Returns:
+        pyrender.OffscreenRenderer instance
     """
-    # Set rendering backend
-    os.environ['PYOPENGL_PLATFORM'] = backend
-
-    if backend == 'egl':
-        # Detect available GPUs
-        gpus = detect_gpus()
-
-        if len(gpus) == 0:
-            print("Warning: No GPU devices detected. Trying default EGL device...")
-        elif len(gpus) == 1:
-            # Only one GPU, use it automatically
-            gpu_id = 0
-            print(f"Using GPU: {gpus[0]['vendor']} - {gpus[0]['model']}")
-            os.environ['EGL_DEVICE_ID'] = str(gpu_id)
-        else:
-            # Multiple GPUs detected
-            if gpu_id is None:
-                # Prompt user to select
-                gpu_id = select_gpu(gpus)
-            elif gpu_id >= len(gpus):
-                print(f"Error: GPU ID {gpu_id} not found. Available GPUs: 0-{len(gpus)-1}")
-                sys.exit(1)
-            else:
-                # Use specified GPU
-                print(f"Using GPU: {gpus[gpu_id]['vendor']} - {gpus[gpu_id]['model']}")
-
-            os.environ['EGL_DEVICE_ID'] = str(gpu_id)
-    elif backend == 'osmesa':
-        print("Using OSMesa (CPU-only) rendering backend")
-
-    renderer = pyrender.OffscreenRenderer(width, height)
-    return renderer
+    try:
+        renderer = pyrender.OffscreenRenderer(width, height)
+        return renderer
+    except Exception as e:
+        print(f"Renderer initialization failed: {e}")
+        print("\nEnsure EGL/OpenGL dependencies are installed and GPU drivers are working.")
+        print("On headless servers, ensure libEGL is available.")
+        sys.exit(1)
 
 
 def load_data(subject, scene):
@@ -539,15 +553,7 @@ Examples:
         '--gpu-id',
         type=int,
         default=None,
-        help='GPU device ID to use (auto-detect if not specified)'
-    )
-
-    parser.add_argument(
-        '--backend',
-        type=str,
-        default='egl',
-        choices=['egl', 'osmesa'],
-        help='Rendering backend: egl (GPU) or osmesa (CPU-only). Default: egl'
+        help='GPU device ID to use (prompts if multiple GPUs detected and not specified)'
     )
 
     return parser.parse_args()
@@ -557,6 +563,10 @@ def main():
     """Main rendering pipeline."""
     # Parse command line arguments
     args = parse_arguments()
+
+    # Setup rendering backend first
+    print("Setting up rendering backend...")
+    setup_rendering_backend(args.gpu_id)
 
     print("=" * 60)
     print("SMPL Mesh Visualization Script")
@@ -593,7 +603,7 @@ def main():
 
     # Setup renderer
     print("Setting up renderer...")
-    renderer = setup_renderer(args.resolution, args.resolution, gpu_id=args.gpu_id, backend=args.backend)
+    renderer = setup_renderer(args.resolution, args.resolution)
 
     # Determine number of frames to render
     if args.max_frames == 0:
