@@ -31,6 +31,17 @@ import argparse
 import subprocess
 import re
 from pathlib import Path
+import numpy as np
+import torch
+import trimesh
+from trimesh.visual import ColorVisuals
+import pyrender
+import matplotlib.pyplot as plt
+from matplotlib.widgets import Slider, Button
+from matplotlib.animation import FuncAnimation
+
+# Import SimpleSMPL model
+from simple_smpl import SimpleSMPL
 
 
 def detect_gpus():
@@ -286,25 +297,6 @@ def setup_rendering_backend(gpu_id=None):
     return gpu_id
 
 
-# Parse arguments and setup backend FIRST, before any imports that depend on PYOPENGL_PLATFORM
-if __name__ == '__main__':
-    _args = parse_arguments()
-    _gpu_id = setup_rendering_backend(_args.gpu_id)
-
-
-# Now import everything else (pyrender will pick up the env var)
-import numpy as np
-import torch
-import trimesh
-import pyrender
-import matplotlib.pyplot as plt
-from matplotlib.widgets import Slider, Button
-from matplotlib.animation import FuncAnimation
-
-# Import SimpleSMPL model
-from simple_smpl import SimpleSMPL
-
-
 def setup_renderer_live(width=1024, height=1024):
     """
     Initialize offscreen renderer for live viewing.
@@ -442,25 +434,35 @@ def initialize_smpl_model(model_type='neutral'):
 
 
 def create_floor_mesh():
-    """Create a grid floor for visual reference."""
+    """Create a simple flat floor plane for visual reference."""
     grid_size = 4.0
 
-    floor_vertices = np.array([
+    # Create a simple quad at y=0
+    vertices = np.array([
         [-grid_size, 0, -grid_size],
         [grid_size, 0, -grid_size],
-        [grid_size, 0, grid_size],
-        [-grid_size, 0, grid_size]
+        [-grid_size, 0, grid_size],
+        [grid_size, 0, grid_size]
     ])
 
-    floor_faces = np.array([
-        [0, 1, 2],
-        [0, 2, 3]
+    # Two triangles with CCW winding for upward normals
+    faces = np.array([
+        [0, 2, 1],  # First triangle
+        [1, 2, 3]   # Second triangle
     ])
 
-    floor_mesh = trimesh.Trimesh(vertices=floor_vertices, faces=floor_faces)
-    floor_mesh.visual.vertex_colors = [100, 100, 200, 100]  # Light gray, semi-transparent
+    floor_mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
+    floor_mesh.visual.vertex_colors = [150, 150, 180, 150]  # Light blue-gray
 
-    return pyrender.Mesh.from_trimesh(floor_mesh, smooth=False)
+    # Material with double-sided rendering
+    material = pyrender.MetallicRoughnessMaterial(
+        metallicFactor=0.0,
+        roughnessFactor=0.8,
+        alphaMode='BLEND',
+        doubleSided=True
+    )
+
+    return pyrender.Mesh.from_trimesh(floor_mesh, material=material, smooth=False)
 
 
 def render_frame_with_camera(smpl_model, betas, pose, transl, renderer,
@@ -505,7 +507,7 @@ def render_frame_with_camera(smpl_model, betas, pose, transl, renderer,
 
     # Create trimesh object
     body_mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
-    body_mesh.visual.vertex_colors = [174, 199, 232, 255]  # Light blue color
+    body_mesh.visual.vertex_colors = [174, 199, 232, 255]  # type: ignore # Light blue color
 
     # Create pyrender mesh
     mesh = pyrender.Mesh.from_trimesh(body_mesh, smooth=True)
@@ -727,7 +729,7 @@ def main(args):
     fig.canvas.mpl_connect('scroll_event', on_scroll)
 
     # Frame slider widget
-    ax_frame_slider = plt.axes([0.2, 0.10, 0.55, 0.03])
+    ax_frame_slider = plt.axes((0.2, 0.10, 0.55, 0.03))
     frame_slider = Slider(ax_frame_slider, 'Frame', 0, total_frames - 1, valinit=0, valfmt='%d')
 
     def update_frame_slider(val):
@@ -744,7 +746,7 @@ def main(args):
     frame_slider.on_changed(update_frame_slider)
 
     # Beta slider widget (uniform body shape - "fatness")
-    ax_beta_slider = plt.axes([0.2, 0.05, 0.55, 0.03])
+    ax_beta_slider = plt.axes((0.2, 0.05, 0.55, 0.03))
     beta_slider = Slider(ax_beta_slider, 'Beta', -10.0, 10.0, valinit=0.0, valfmt='%.1f')
 
     def update_beta_slider(val):
@@ -759,7 +761,7 @@ def main(args):
     beta_slider.on_changed(update_beta_slider)
 
     # Play/Pause button
-    ax_button = plt.axes([0.8, 0.10, 0.1, 0.04])
+    ax_button = plt.axes((0.8, 0.10, 0.1, 0.04))
     button = Button(ax_button, 'Pause')
 
     def toggle_pause(event):
@@ -806,5 +808,6 @@ def main(args):
 
 
 if __name__ == '__main__':
-    # _args and _gpu_id were already set at module level
-    main(_args)
+    args = parse_arguments()
+    setup_rendering_backend(args.gpu_id)
+    main(args)
