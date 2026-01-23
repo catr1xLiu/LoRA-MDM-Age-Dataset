@@ -16,6 +16,7 @@ Usage:
 
 import os
 import sys
+
 import argparse
 import numpy as np
 import torch
@@ -27,8 +28,7 @@ import subprocess
 import re
 from pathlib import Path
 
-# Import our simple SMPL model
-from simple_smpl import SimpleSMPL
+# smplx is imported inside initialize_smpl_model() to ensure correct working directory
 
 
 def detect_gpus():
@@ -247,7 +247,9 @@ def load_data(subject, scene):
     subj_id = f"SUBJ{subject}"
 
     # Load shape parameters (betas) - constant for subject
-    betas_path = f'./data/fitted_smpl_all_3/{subj_id}/betas.npy'
+    # Data is in parent directory
+    data_dir = os.path.join('data', 'fitted_smpl_all_3', subj_id)
+    betas_path = os.path.join(data_dir, 'betas.npy')
 
     if not os.path.exists(betas_path):
         raise FileNotFoundError(f"Shape file not found: {betas_path}")
@@ -268,7 +270,7 @@ def load_data(subject, scene):
     # Load motion data (poses and translations)
     # Format: SUBJ1_0, SUBJ2_1, etc.
     subj_num = subject.lstrip('0') or '0'  # Remove leading zeros, '01' -> '1'
-    motion_path = f'./data/fitted_smpl_all_3/{subj_id}/SUBJ{subj_num}_{scene}_smpl_params.npz'
+    motion_path = os.path.join(data_dir, f'SUBJ{subj_num}_{scene}_smpl_params.npz')
 
     if not os.path.exists(motion_path):
         raise FileNotFoundError(f"Motion file not found: {motion_path}")
@@ -314,34 +316,27 @@ def load_data(subject, scene):
 
 def initialize_smpl_model(model_type='neutral'):
     """
-    Initialize SMPL body model.
+    Initialize SMPL body model using smplx library.
 
     Args:
         model_type: Model gender type ('neutral', 'male', or 'female')
 
     Returns:
-        SimpleSMPL model instance
+        smplx.SMPL model instance
     """
     print(f"Initializing SMPL model (type: {model_type})...")
 
-    # Map model type to file name
-    model_files = {
-        'neutral': './data/smpl/SMPL_NEUTRAL.npz',
-        'male': './data/smpl/SMPL_MALE.npz',
-        'female': './data/smpl/SMPL_FEMALE.npz'
-    }
-
-    if model_type.lower() not in model_files:
+    if model_type.lower() not in ['neutral', 'male', 'female']:
         raise ValueError(f"Invalid model type: {model_type}. Must be 'neutral', 'male', or 'female'")
 
-    model_path = model_files[model_type.lower()]
-
-    if not os.path.exists(model_path):
-        raise FileNotFoundError(f"SMPL model file not found: {model_path}")
-
-    model = SimpleSMPL(
-        model_path=model_path,
-        gender=model_type.lower()
+    # Load model using config from visualize_joints (already in that directory)
+    import smplx
+    model = smplx.create(
+        model_path=os.path.join('data', 'smpl'),
+        model_type='smpl',
+        gender=model_type.lower(),
+        ext='pkl',
+        batch_size=1
     )
 
     print("  SMPL model loaded successfully")
@@ -411,7 +406,8 @@ def render_frame(smpl_model, betas, pose, transl, renderer):
             betas=betas,
             global_orient=global_orient,
             body_pose=body_pose,
-            transl=transl
+            transl=transl,
+            return_verts=True
         )
 
     vertices = output.vertices.detach().cpu().numpy()[0]
@@ -591,7 +587,7 @@ def main():
 
     except FileNotFoundError as e:
         print(f"\nError: {e}")
-        print("\nAvailable subjects can be found in: ./data/fitted_smpl_all_3/")
+        print(f"\nAvailable subjects can be found in: {os.path.join('data', 'fitted_smpl_all_3')}")
         sys.exit(1)
 
     # Initialize SMPL model
