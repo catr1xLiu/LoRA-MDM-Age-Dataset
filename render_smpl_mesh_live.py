@@ -17,6 +17,7 @@ Usage:
 Controls:
     Frame Slider:   Frame scrubbing (auto-pauses)
     Beta Slider:    Adjust body shape (uniform betas, -10 to +10, affects "fatness")
+    Override:       Checkbox to enable/disable beta slider override (unchecked = original betas)
     Play/Pause:     Toggle animation playback
     Left/Right:     Rotate camera horizontally (azimuth ±15°)
     Up/Down:        Tilt camera vertically (elevation ±10°, range: -20° to 80°)
@@ -38,7 +39,7 @@ import trimesh
 from trimesh.visual import ColorVisuals
 import pyrender
 import matplotlib.pyplot as plt
-from matplotlib.widgets import Slider, Button
+from matplotlib.widgets import Slider, Button, CheckButtons
 from matplotlib.animation import FuncAnimation
 
 
@@ -647,7 +648,9 @@ def main(args):
         'camera_elevation': 15,
         'cam_distance': 3.0,  # Closer default for better visibility
         'beta_value': 0.0,  # Uniform beta value for all 10 shape params
-        'betas': betas.clone()  # Mutable copy of betas
+        'original_betas': betas.clone(),  # Original betas from npz data
+        'betas': betas.clone(),  # Mutable copy of betas (used for rendering)
+        'override_betas': False  # Whether to use slider value or original betas
     }
 
     # Pre-render first frame
@@ -670,9 +673,10 @@ def main(args):
             ui_state['cam_distance']
         )
         img_display.set_data(frame_rgb)
+        beta_status = f'Beta: {ui_state["beta_value"]:.1f}' if ui_state['override_betas'] else 'Beta: original'
         ax.set_title(f'Frame {frame_idx * args.downsample} / {total_frames * args.downsample - 1} | '
                      f'Az: {ui_state["camera_azimuth"]}° El: {ui_state["camera_elevation"]}° '
-                     f'Dist: {ui_state["cam_distance"]:.1f} | Beta: {ui_state["beta_value"]:.1f}')
+                     f'Dist: {ui_state["cam_distance"]:.1f} | {beta_status}')
 
     # Animation frame callback
     def on_frame(frame):
@@ -747,13 +751,31 @@ def main(args):
     def update_beta_slider(val):
         beta_val = beta_slider.val
         ui_state['beta_value'] = beta_val
-        # Set all 10 beta values to the same uniform value
-        ui_state['betas'] = torch.full((1, 10), beta_val, dtype=torch.float32)
+        # Only apply slider value if override is enabled
+        if ui_state['override_betas']:
+            ui_state['betas'] = torch.full((1, 10), beta_val, dtype=torch.float32)
+            update_visuals(ui_state['frame'])
+            fig.canvas.draw_idle()
+
+    beta_slider.on_changed(update_beta_slider)
+
+    # Beta override checkbox
+    ax_checkbox = plt.axes((0.8, 0.04, 0.15, 0.05))
+    checkbox = CheckButtons(ax_checkbox, ['Override'], [False])
+
+    def update_checkbox(_label):
+        ui_state['override_betas'] = not ui_state['override_betas']
+        if ui_state['override_betas']:
+            # Apply slider value
+            ui_state['betas'] = torch.full((1, 10), ui_state['beta_value'], dtype=torch.float32)
+        else:
+            # Restore original betas
+            ui_state['betas'] = ui_state['original_betas'].clone()
 
         update_visuals(ui_state['frame'])
         fig.canvas.draw_idle()
 
-    beta_slider.on_changed(update_beta_slider)
+    checkbox.on_clicked(update_checkbox)
 
     # Play/Pause button
     ax_button = plt.axes((0.8, 0.10, 0.1, 0.04))
@@ -782,6 +804,7 @@ def main(args):
     print("  Spacebar:          Play/Pause toggle")
     print("  Frame Slider:      Seek to specific frame")
     print("  Beta Slider:       Adjust body shape (-10 to +10, uniform 'fatness')")
+    print("  Override Checkbox: Enable to use slider betas, disable for original betas")
 
     anim = FuncAnimation(
         fig, on_frame,
