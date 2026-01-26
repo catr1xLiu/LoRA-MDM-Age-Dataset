@@ -11,8 +11,8 @@ import trimesh
 import h5py
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "src"))
-from smplify import SMPLify3D
-import config
+from src.smplify import SMPLify3D
+from src.config import *
 
 # parsing argmument
 parser = argparse.ArgumentParser()
@@ -20,8 +20,8 @@ parser.add_argument('--batchSize', type=int, default=1,
                     help='input batch size')
 parser.add_argument('--num_smplify_iters', type=int, default=100,
                     help='num of smplify iters')
-parser.add_argument('--cuda', type=bool, default=True,
-                    help='enables cuda')
+parser.add_argument('--cuda', action='store_true',
+                    help='enables cuda (default: CPU)')
 parser.add_argument('--gpu_ids', type=int, default=0,
                     help='choose gpu ids')
 parser.add_argument('--num_joints', type=int, default=22,
@@ -41,13 +41,13 @@ print(opt)
 
 # ---load predefined something
 device = torch.device("cuda:" + str(opt.gpu_ids) if opt.cuda else "cpu")
-print(config.SMPL_MODEL_DIR)
-smplmodel = smplx.create(config.SMPL_MODEL_DIR, 
+print(SMPL_MODEL_DIR)
+smplmodel = smplx.create(SMPL_MODEL_DIR, 
                          model_type="smpl", gender="neutral", ext="pkl",
                          batch_size=opt.batchSize).to(device)
 
 # ## --- load the mean pose as original ---- 
-smpl_mean_file = config.SMPL_MEAN_FILE
+smpl_mean_file = SMPL_MEAN_FILE
 
 file = h5py.File(smpl_mean_file, 'r')
 init_mean_pose = torch.from_numpy(file['pose'][:]).unsqueeze(0).float()
@@ -70,7 +70,15 @@ smplify = SMPLify3D(smplxmodel=smplmodel,
     
 purename = os.path.splitext(opt.files)[0]
 # --- load data ---
-data = np.load(opt.data_folder + "/" + purename + ".npy")
+full_path = os.path.join(opt.data_folder, opt.files)
+
+# Check file extension and load accordingly
+if opt.files.endswith('.npz'):
+	data = np.load(full_path)['joints']
+elif opt.files.endswith('.npy'):
+	data = np.load(full_path)
+else:
+	raise ValueError(f"Unsupported file format: {opt.files}. Only .npy and .npz files are supported.")
 
 dir_save = os.path.join(opt.save_folder, purename)
 if not os.path.isdir(dir_save):

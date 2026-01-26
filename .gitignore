@@ -14,6 +14,7 @@
 #   - SMPL body models (smpl/)
 #   - Visualization outputs (outputs/)
 data/
+visualize_joints/smpl_models/smpl/
 
 # ----------------------------------------------------------------------------
 # Python

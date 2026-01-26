@@ -9,7 +9,6 @@ Convert fitted SMPL params to HumanML3D-style 22 SMPL joints at 20 FPS.
 import os, glob, json, argparse
 from pathlib import Path
 import numpy as np
-import torch
 
 # same 24-joint order as fitter
 SMPL_24 = [
