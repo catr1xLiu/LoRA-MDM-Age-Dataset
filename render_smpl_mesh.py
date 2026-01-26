@@ -39,71 +39,60 @@ def detect_gpus():
         list: List of dicts with 'id', 'device', 'vendor', 'model' keys
     """
     gpus = []
-    dri_path = Path('/dev/dri')
+    dri_path = Path("/dev/dri")
 
     if not dri_path.exists():
         return gpus
 
     # Find all card devices
-    cards = sorted([c for c in dri_path.glob('card*') if c.name.startswith('card') and c.name[4:].isdigit()])
+    cards = sorted([c for c in dri_path.glob("card*") if c.name.startswith("card") and c.name[4:].isdigit()])
 
     for card_idx, card in enumerate(cards):
-        gpu_info = {
-            'id': card_idx,
-            'device': str(card),
-            'vendor': 'Unknown',
-            'model': 'Unknown'
-        }
+        gpu_info = {"id": card_idx, "device": str(card), "vendor": "Unknown", "model": "Unknown"}
 
         try:
             # Get device information using udevadm
             result = subprocess.run(
-                ['udevadm', 'info', '--query=all', f'--name={card}'],
-                capture_output=True,
-                text=True,
-                timeout=2
+                ["udevadm", "info", "--query=all", f"--name={card}"], capture_output=True, text=True, timeout=2
             )
 
             if result.returncode == 0:
                 output = result.stdout
 
                 # Extract PCI path
-                pci_match = re.search(r'ID_PATH=pci-([\S]+)', output)
+                pci_match = re.search(r"ID_PATH=pci-([\S]+)", output)
                 if pci_match:
                     pci_path = pci_match.group(1)
 
                     # Get GPU info from lspci
                     lspci_result = subprocess.run(
-                        ['lspci', '-v', '-s', pci_path],
-                        capture_output=True,
-                        text=True,
-                        timeout=2
+                        ["lspci", "-v", "-s", pci_path], capture_output=True, text=True, timeout=2
                     )
 
                     if lspci_result.returncode == 0:
                         lspci_output = lspci_result.stdout
 
                         # Parse vendor and model from VGA controller line
-                        vga_match = re.search(r'VGA compatible controller: (.+)', lspci_output)
+                        vga_match = re.search(r"VGA compatible controller: (.+)", lspci_output)
                         if vga_match:
                             full_name = vga_match.group(1).strip()
 
                             # Split vendor and model
-                            if 'NVIDIA' in full_name:
-                                gpu_info['vendor'] = 'NVIDIA'
-                                gpu_info['model'] = full_name.replace('NVIDIA Corporation', '').strip()
-                            elif 'AMD' in full_name or 'ATI' in full_name:
-                                gpu_info['vendor'] = 'AMD'
+                            if "NVIDIA" in full_name:
+                                gpu_info["vendor"] = "NVIDIA"
+                                gpu_info["model"] = full_name.replace("NVIDIA Corporation", "").strip()
+                            elif "AMD" in full_name or "ATI" in full_name:
+                                gpu_info["vendor"] = "AMD"
                                 # Clean up AMD naming
-                                model = re.sub(r'Advanced Micro Devices, Inc\.\s*\[AMD/ATI\]\s*', '', full_name)
-                                model = re.sub(r'\s*\(prog-if.*?\).*', '', model)
-                                model = re.sub(r'\s*\(rev.*?\).*', '', model)
-                                gpu_info['model'] = model.strip()
-                            elif 'Intel' in full_name:
-                                gpu_info['vendor'] = 'Intel'
-                                gpu_info['model'] = full_name.replace('Intel Corporation', '').strip()
+                                model = re.sub(r"Advanced Micro Devices, Inc\.\s*\[AMD/ATI\]\s*", "", full_name)
+                                model = re.sub(r"\s*\(prog-if.*?\).*", "", model)
+                                model = re.sub(r"\s*\(rev.*?\).*", "", model)
+                                gpu_info["model"] = model.strip()
+                            elif "Intel" in full_name:
+                                gpu_info["vendor"] = "Intel"
+                                gpu_info["model"] = full_name.replace("Intel Corporation", "").strip()
                             else:
-                                gpu_info['model'] = full_name
+                                gpu_info["model"] = full_name
 
         except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
             # If detection fails, keep default 'Unknown' values
@@ -134,13 +123,9 @@ def select_gpu(gpus):
         # Check if GPU has working drivers by trying glxinfo
         try:
             result = subprocess.run(
-                ['glxinfo'],
-                capture_output=True,
-                text=True,
-                timeout=2,
-                env={**os.environ, 'DRI_PRIME': str(gpu['id'])}
+                ["glxinfo"], capture_output=True, text=True, timeout=2, env={**os.environ, "DRI_PRIME": str(gpu["id"])}
             )
-            if result.returncode == 0 and gpu['vendor'] in result.stdout:
+            if result.returncode == 0 and gpu["vendor"] in result.stdout:
                 status = " [drivers OK]"
         except Exception:
             pass
@@ -178,7 +163,7 @@ def setup_rendering_backend(gpu_id=None):
         int or None: Selected GPU ID (None if using default EGL device)
     """
     # Always use EGL backend
-    os.environ['PYOPENGL_PLATFORM'] = 'egl'
+    os.environ["PYOPENGL_PLATFORM"] = "egl"
 
     # Detect available GPUs
     gpus = detect_gpus()
@@ -191,7 +176,7 @@ def setup_rendering_backend(gpu_id=None):
         # Only one GPU, use it automatically
         gpu_id = 0
         print(f"Using GPU: {gpus[0]['vendor']} - {gpus[0]['model']}")
-        os.environ['EGL_DEVICE_ID'] = str(gpu_id)
+        os.environ["EGL_DEVICE_ID"] = str(gpu_id)
         return gpu_id
 
     # Multiple GPUs detected
@@ -205,7 +190,7 @@ def setup_rendering_backend(gpu_id=None):
         # Use specified GPU
         print(f"Using GPU: {gpus[gpu_id]['vendor']} - {gpus[gpu_id]['model']}")
 
-    os.environ['EGL_DEVICE_ID'] = str(gpu_id)
+    os.environ["EGL_DEVICE_ID"] = str(gpu_id)
     return gpu_id
 
 
@@ -248,8 +233,8 @@ def load_data(subject, scene):
 
     # Load shape parameters (betas) - constant for subject
     # Data is in parent directory
-    data_dir = os.path.join('data', 'fitted_smpl_all_3', subj_id)
-    betas_path = os.path.join(data_dir, 'betas.npy')
+    data_dir = os.path.join("data", "fitted_smpl_all_3", subj_id)
+    betas_path = os.path.join(data_dir, "betas.npy")
 
     if not os.path.exists(betas_path):
         raise FileNotFoundError(f"Shape file not found: {betas_path}")
@@ -269,8 +254,8 @@ def load_data(subject, scene):
 
     # Load motion data (poses and translations)
     # Format: SUBJ1_0, SUBJ2_1, etc.
-    subj_num = subject.lstrip('0') or '0'  # Remove leading zeros, '01' -> '1'
-    motion_path = os.path.join(data_dir, f'SUBJ{subj_num}_{scene}_smpl_params.npz')
+    subj_num = subject.lstrip("0") or "0"  # Remove leading zeros, '01' -> '1'
+    motion_path = os.path.join(data_dir, f"SUBJ{subj_num}_{scene}_smpl_params.npz")
 
     if not os.path.exists(motion_path):
         raise FileNotFoundError(f"Motion file not found: {motion_path}")
@@ -281,20 +266,20 @@ def load_data(subject, scene):
 
     # Extract pose and translation data
     # Handle different possible key names
-    if 'poses' in motion_data:
-        poses = motion_data['poses']
-    elif 'body_pose' in motion_data and 'global_orient' in motion_data:
+    if "poses" in motion_data:
+        poses = motion_data["poses"]
+    elif "body_pose" in motion_data and "global_orient" in motion_data:
         # Concatenate global orientation and body pose
-        global_orient = motion_data['global_orient']
-        body_pose = motion_data['body_pose']
+        global_orient = motion_data["global_orient"]
+        body_pose = motion_data["body_pose"]
         poses = np.concatenate([global_orient, body_pose], axis=-1)
     else:
         raise ValueError(f"Cannot find pose data in keys: {list(motion_data.keys())}")
 
-    if 'trans' in motion_data:
-        trans = motion_data['trans']
-    elif 'transl' in motion_data:
-        trans = motion_data['transl']
+    if "trans" in motion_data:
+        trans = motion_data["trans"]
+    elif "transl" in motion_data:
+        trans = motion_data["transl"]
     else:
         raise ValueError(f"Cannot find translation data in keys: {list(motion_data.keys())}")
 
@@ -307,14 +292,14 @@ def load_data(subject, scene):
 
     # Extract gender from motion data if available
     gender = None
-    if 'gender' in motion_data:
-        gender = str(motion_data['gender'])
+    if "gender" in motion_data:
+        gender = str(motion_data["gender"])
         print(f"  Detected gender: {gender}")
 
     return betas, poses, trans, gender
 
 
-def initialize_smpl_model(model_type='neutral'):
+def initialize_smpl_model(model_type="neutral"):
     """
     Initialize SMPL body model using smplx library.
 
@@ -326,17 +311,14 @@ def initialize_smpl_model(model_type='neutral'):
     """
     print(f"Initializing SMPL model (type: {model_type})...")
 
-    if model_type.lower() not in ['neutral', 'male', 'female']:
+    if model_type.lower() not in ["neutral", "male", "female"]:
         raise ValueError(f"Invalid model type: {model_type}. Must be 'neutral', 'male', or 'female'")
 
     # Load model using config from visualize_joints (already in that directory)
     import smplx
+
     model = smplx.create(
-        model_path=os.path.join('data', 'smpl'),
-        model_type='smpl',
-        gender=model_type.lower(),
-        ext='pkl',
-        batch_size=1
+        model_path=os.path.join("data", "smpl"), model_type="smpl", gender=model_type.lower(), ext="pkl", batch_size=1
     )
 
     print("  SMPL model loaded successfully")
@@ -367,17 +349,11 @@ def create_floor_mesh():
     vertices = np.array(vertices)
 
     # Create a simple floor plane mesh
-    floor_vertices = np.array([
-        [-grid_size, 0, -grid_size],
-        [grid_size, 0, -grid_size],
-        [grid_size, 0, grid_size],
-        [-grid_size, 0, grid_size]
-    ])
+    floor_vertices = np.array(
+        [[-grid_size, 0, -grid_size], [grid_size, 0, -grid_size], [grid_size, 0, grid_size], [-grid_size, 0, grid_size]]
+    )
 
-    floor_faces = np.array([
-        [0, 1, 2],
-        [0, 2, 3]
-    ])
+    floor_faces = np.array([[0, 1, 2], [0, 2, 3]])
 
     floor_mesh = trimesh.Trimesh(vertices=floor_vertices, faces=floor_faces)
     floor_mesh.visual.vertex_colors = [200, 200, 200, 100]  # Light gray, semi-transparent
@@ -403,11 +379,7 @@ def render_frame(smpl_model, betas, pose, transl, renderer):
     # Forward pass through SMPL
     with torch.no_grad():
         output = smpl_model(
-            betas=betas,
-            global_orient=global_orient,
-            body_pose=body_pose,
-            transl=transl,
-            return_verts=True
+            betas=betas, global_orient=global_orient, body_pose=body_pose, transl=transl, return_verts=True
         )
 
     vertices = output.vertices.detach().cpu().numpy()[0]
@@ -432,20 +404,10 @@ def render_frame(smpl_model, betas, pose, transl, renderer):
 
     # Add directional light from multiple angles
     light1 = pyrender.DirectionalLight(color=[1.0, 1.0, 1.0], intensity=2.0)
-    scene.add(light1, pose=np.array([
-        [1, 0, 0, 0],
-        [0, 1, 0, 3],
-        [0, 0, 1, 3],
-        [0, 0, 0, 1]
-    ]))
+    scene.add(light1, pose=np.array([[1, 0, 0, 0], [0, 1, 0, 3], [0, 0, 1, 3], [0, 0, 0, 1]]))
 
     light2 = pyrender.DirectionalLight(color=[1.0, 1.0, 1.0], intensity=1.5)
-    scene.add(light2, pose=np.array([
-        [-1, 0, 0, 0],
-        [0, 1, 0, 3],
-        [0, 0, -1, -3],
-        [0, 0, 0, 1]
-    ]))
+    scene.add(light2, pose=np.array([[-1, 0, 0, 0], [0, 1, 0, 3], [0, 0, -1, -3], [0, 0, 0, 1]]))
 
     # Position camera to follow the person
     # Get the center of the mesh for camera targeting
@@ -487,7 +449,7 @@ def render_frame(smpl_model, betas, pose, transl, renderer):
 def parse_arguments():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
-        description='Render SMPL mesh visualization from motion capture data',
+        description="Render SMPL mesh visualization from motion capture data",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -499,57 +461,35 @@ Examples:
 
   # Short form
   python3 render_smpl_mesh.py -s 138 -c 2 -m female
-        """
+        """,
     )
 
+    parser.add_argument("-s", "--subject", type=str, required=True, help="Subject ID (e.g., 01, 02, 138)")
+
+    parser.add_argument("-c", "--scene", type=int, required=True, help="Scene number (e.g., 0, 1, 2, 3)")
+
     parser.add_argument(
-        '-s', '--subject',
+        "-m",
+        "--model",
         type=str,
-        required=True,
-        help='Subject ID (e.g., 01, 02, 138)'
+        default="neutral",
+        choices=["neutral", "male", "female"],
+        help="SMPL model type (default: neutral)",
     )
 
     parser.add_argument(
-        '-c', '--scene',
-        type=int,
-        required=True,
-        help='Scene number (e.g., 0, 1, 2, 3)'
+        "--max-frames", type=int, default=3000, help="Maximum number of frames to render (default: 300, 0 for all)"
     )
 
-    parser.add_argument(
-        '-m', '--model',
-        type=str,
-        default='neutral',
-        choices=['neutral', 'male', 'female'],
-        help='SMPL model type (default: neutral)'
-    )
+    parser.add_argument("--fps", type=int, default=30, help="Output video frame rate (default: 30)")
+
+    parser.add_argument("--resolution", type=int, default=1024, help="Output video resolution (square, default: 1024)")
 
     parser.add_argument(
-        '--max-frames',
-        type=int,
-        default=3000,
-        help='Maximum number of frames to render (default: 300, 0 for all)'
-    )
-
-    parser.add_argument(
-        '--fps',
-        type=int,
-        default=30,
-        help='Output video frame rate (default: 30)'
-    )
-
-    parser.add_argument(
-        '--resolution',
-        type=int,
-        default=1024,
-        help='Output video resolution (square, default: 1024)'
-    )
-
-    parser.add_argument(
-        '--gpu-id',
+        "--gpu-id",
         type=int,
         default=None,
-        help='GPU device ID to use (prompts if multiple GPUs detected and not specified)'
+        help="GPU device ID to use (prompts if multiple GPUs detected and not specified)",
     )
 
     return parser.parse_args()
@@ -573,7 +513,7 @@ def main():
     print("=" * 60)
 
     # Create output directory if it doesn't exist
-    os.makedirs('outputs/videos', exist_ok=True)
+    os.makedirs("outputs/videos", exist_ok=True)
 
     # Load data
     try:
@@ -581,7 +521,7 @@ def main():
 
         # If model type is not specified and we detected gender, use it
         model_type = args.model
-        if args.model == 'neutral' and detected_gender and detected_gender.lower() in ['male', 'female']:
+        if args.model == "neutral" and detected_gender and detected_gender.lower() in ["male", "female"]:
             print(f"  Auto-selecting {detected_gender} model based on data")
             model_type = detected_gender.lower()
 
@@ -609,9 +549,9 @@ def main():
     print(f"\nRendering {num_frames} frames...")
 
     # Setup video writer with descriptive filename
-    output_filename = f'SUBJ{args.subject}_scene{args.scene}_{model_type}_visualization.mp4'
-    output_path = f'outputs/videos/{output_filename}'
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    output_filename = f"SUBJ{args.subject}_scene{args.scene}_{model_type}_visualization.mp4"
+    output_path = f"outputs/videos/{output_filename}"
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     video_writer = cv2.VideoWriter(output_path, fourcc, args.fps, (args.resolution, args.resolution))
 
     # Render loop
@@ -639,5 +579,5 @@ def main():
     print(f"{'=' * 60}")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

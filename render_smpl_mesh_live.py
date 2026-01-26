@@ -51,71 +51,60 @@ def detect_gpus():
         list: List of dicts with 'id', 'device', 'vendor', 'model' keys
     """
     gpus = []
-    dri_path = Path('/dev/dri')
+    dri_path = Path("/dev/dri")
 
     if not dri_path.exists():
         return gpus
 
     # Find all card devices
-    cards = sorted([c for c in dri_path.glob('card*') if c.name.startswith('card') and c.name[4:].isdigit()])
+    cards = sorted([c for c in dri_path.glob("card*") if c.name.startswith("card") and c.name[4:].isdigit()])
 
     for card_idx, card in enumerate(cards):
-        gpu_info = {
-            'id': card_idx,
-            'device': str(card),
-            'vendor': 'Unknown',
-            'model': 'Unknown'
-        }
+        gpu_info = {"id": card_idx, "device": str(card), "vendor": "Unknown", "model": "Unknown"}
 
         try:
             # Get device information using udevadm
             result = subprocess.run(
-                ['udevadm', 'info', '--query=all', f'--name={card}'],
-                capture_output=True,
-                text=True,
-                timeout=2
+                ["udevadm", "info", "--query=all", f"--name={card}"], capture_output=True, text=True, timeout=2
             )
 
             if result.returncode == 0:
                 output = result.stdout
 
                 # Extract PCI path
-                pci_match = re.search(r'ID_PATH=pci-([\S]+)', output)
+                pci_match = re.search(r"ID_PATH=pci-([\S]+)", output)
                 if pci_match:
                     pci_path = pci_match.group(1)
 
                     # Get GPU info from lspci
                     lspci_result = subprocess.run(
-                        ['lspci', '-v', '-s', pci_path],
-                        capture_output=True,
-                        text=True,
-                        timeout=2
+                        ["lspci", "-v", "-s", pci_path], capture_output=True, text=True, timeout=2
                     )
 
                     if lspci_result.returncode == 0:
                         lspci_output = lspci_result.stdout
 
                         # Parse vendor and model from VGA controller line
-                        vga_match = re.search(r'VGA compatible controller: (.+)', lspci_output)
+                        vga_match = re.search(r"VGA compatible controller: (.+)", lspci_output)
                         if vga_match:
                             full_name = vga_match.group(1).strip()
 
                             # Split vendor and model
-                            if 'NVIDIA' in full_name:
-                                gpu_info['vendor'] = 'NVIDIA'
-                                gpu_info['model'] = full_name.replace('NVIDIA Corporation', '').strip()
-                            elif 'AMD' in full_name or 'ATI' in full_name:
-                                gpu_info['vendor'] = 'AMD'
+                            if "NVIDIA" in full_name:
+                                gpu_info["vendor"] = "NVIDIA"
+                                gpu_info["model"] = full_name.replace("NVIDIA Corporation", "").strip()
+                            elif "AMD" in full_name or "ATI" in full_name:
+                                gpu_info["vendor"] = "AMD"
                                 # Clean up AMD naming
-                                model = re.sub(r'Advanced Micro Devices, Inc\.\s*\[AMD/ATI\]\s*', '', full_name)
-                                model = re.sub(r'\s*\(prog-if.*?\).*', '', model)
-                                model = re.sub(r'\s*\(rev.*?\).*', '', model)
-                                gpu_info['model'] = model.strip()
-                            elif 'Intel' in full_name:
-                                gpu_info['vendor'] = 'Intel'
-                                gpu_info['model'] = full_name.replace('Intel Corporation', '').strip()
+                                model = re.sub(r"Advanced Micro Devices, Inc\.\s*\[AMD/ATI\]\s*", "", full_name)
+                                model = re.sub(r"\s*\(prog-if.*?\).*", "", model)
+                                model = re.sub(r"\s*\(rev.*?\).*", "", model)
+                                gpu_info["model"] = model.strip()
+                            elif "Intel" in full_name:
+                                gpu_info["vendor"] = "Intel"
+                                gpu_info["model"] = full_name.replace("Intel Corporation", "").strip()
                             else:
-                                gpu_info['model'] = full_name
+                                gpu_info["model"] = full_name
 
         except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
             # If detection fails, keep default 'Unknown' values
@@ -146,13 +135,9 @@ def select_gpu(gpus):
         # Check if GPU has working drivers by trying glxinfo
         try:
             result = subprocess.run(
-                ['glxinfo'],
-                capture_output=True,
-                text=True,
-                timeout=2,
-                env={**os.environ, 'DRI_PRIME': str(gpu['id'])}
+                ["glxinfo"], capture_output=True, text=True, timeout=2, env={**os.environ, "DRI_PRIME": str(gpu["id"])}
             )
-            if result.returncode == 0 and gpu['vendor'] in result.stdout:
+            if result.returncode == 0 and gpu["vendor"] in result.stdout:
                 status = " [drivers OK]"
         except Exception:
             pass
@@ -182,7 +167,7 @@ def select_gpu(gpus):
 def parse_arguments():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
-        description='Interactive SMPL mesh visualization',
+        description="Interactive SMPL mesh visualization",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -198,57 +183,35 @@ Controls:
   Scroll Up:      Zoom in (distance -0.5, min 1.5)
   Scroll Down:    Zoom out (distance +0.5, max 15.0)
   Spacebar:       Play/Pause toggle
-        """
+        """,
     )
 
+    parser.add_argument("-s", "--subject", type=str, required=True, help="Subject ID (e.g., 01, 02, 138)")
+
+    parser.add_argument("-c", "--scene", type=int, required=True, help="Scene number (e.g., 0, 1, 2, 3)")
+
     parser.add_argument(
-        '-s', '--subject',
+        "-m",
+        "--model",
         type=str,
-        required=True,
-        help='Subject ID (e.g., 01, 02, 138)'
+        default="neutral",
+        choices=["neutral", "male", "female"],
+        help="SMPL model type (default: neutral)",
     )
 
-    parser.add_argument(
-        '-c', '--scene',
-        type=int,
-        required=True,
-        help='Scene number (e.g., 0, 1, 2, 3)'
-    )
+    parser.add_argument("--fps", type=int, default=30, help="Target playback frame rate (default: 30)")
+
+    parser.add_argument("--resolution", type=int, default=1024, help="Render resolution in pixels (default: 1024)")
 
     parser.add_argument(
-        '-m', '--model',
-        type=str,
-        default='neutral',
-        choices=['neutral', 'male', 'female'],
-        help='SMPL model type (default: neutral)'
-    )
-
-    parser.add_argument(
-        '--fps',
-        type=int,
-        default=30,
-        help='Target playback frame rate (default: 30)'
-    )
-
-    parser.add_argument(
-        '--resolution',
-        type=int,
-        default=1024,
-        help='Render resolution in pixels (default: 1024)'
-    )
-
-    parser.add_argument(
-        '--gpu-id',
+        "--gpu-id",
         type=int,
         default=None,
-        help='GPU device ID (0, 1, ...). Prompts if multiple GPUs detected and not specified.'
+        help="GPU device ID (0, 1, ...). Prompts if multiple GPUs detected and not specified.",
     )
 
     parser.add_argument(
-        '--downsample',
-        type=int,
-        default=1,
-        help='Skip every Nth frame for faster playback (default: 1)'
+        "--downsample", type=int, default=1, help="Skip every Nth frame for faster playback (default: 1)"
     )
 
     return parser.parse_args()
@@ -265,7 +228,7 @@ def setup_rendering_backend(gpu_id=None):
         int or None: Selected GPU ID (None if using default EGL device)
     """
     # Always use EGL backend
-    os.environ['PYOPENGL_PLATFORM'] = 'egl'
+    os.environ["PYOPENGL_PLATFORM"] = "egl"
 
     # Detect available GPUs
     gpus = detect_gpus()
@@ -278,7 +241,7 @@ def setup_rendering_backend(gpu_id=None):
         # Only one GPU, use it automatically
         gpu_id = 0
         print(f"Using GPU: {gpus[0]['vendor']} - {gpus[0]['model']}")
-        os.environ['EGL_DEVICE_ID'] = str(gpu_id)
+        os.environ["EGL_DEVICE_ID"] = str(gpu_id)
         return gpu_id
 
     # Multiple GPUs detected
@@ -292,7 +255,7 @@ def setup_rendering_backend(gpu_id=None):
         # Use specified GPU
         print(f"Using GPU: {gpus[gpu_id]['vendor']} - {gpus[gpu_id]['model']}")
 
-    os.environ['EGL_DEVICE_ID'] = str(gpu_id)
+    os.environ["EGL_DEVICE_ID"] = str(gpu_id)
     return gpu_id
 
 
@@ -334,10 +297,10 @@ def load_data(subject, scene):
     subj_id = f"SUBJ{subject}"
 
     # Data directory relative to script location (in parent directory)
-    data_dir = os.path.join('data', 'fitted_smpl_all_3', subj_id)
+    data_dir = os.path.join("data", "fitted_smpl_all_3", subj_id)
 
     # Load shape parameters (betas) - constant for subject
-    betas_path = os.path.join(data_dir, 'betas.npy')
+    betas_path = os.path.join(data_dir, "betas.npy")
 
     if not os.path.exists(betas_path):
         raise FileNotFoundError(f"Shape file not found: {betas_path}")
@@ -357,8 +320,8 @@ def load_data(subject, scene):
 
     # Load motion data (poses and translations)
     # Format: SUBJ1_0, SUBJ2_1, etc.
-    subj_num = subject.lstrip('0') or '0'  # Remove leading zeros, '01' -> '1'
-    motion_path = os.path.join(data_dir, f'SUBJ{subj_num}_{scene}_smpl_params.npz')
+    subj_num = subject.lstrip("0") or "0"  # Remove leading zeros, '01' -> '1'
+    motion_path = os.path.join(data_dir, f"SUBJ{subj_num}_{scene}_smpl_params.npz")
 
     if not os.path.exists(motion_path):
         raise FileNotFoundError(f"Motion file not found: {motion_path}")
@@ -368,19 +331,19 @@ def load_data(subject, scene):
     print("  Motion data keys:", list(motion_data.keys()))
 
     # Extract pose and translation data
-    if 'poses' in motion_data:
-        poses = motion_data['poses']
-    elif 'body_pose' in motion_data and 'global_orient' in motion_data:
-        global_orient = motion_data['global_orient']
-        body_pose = motion_data['body_pose']
+    if "poses" in motion_data:
+        poses = motion_data["poses"]
+    elif "body_pose" in motion_data and "global_orient" in motion_data:
+        global_orient = motion_data["global_orient"]
+        body_pose = motion_data["body_pose"]
         poses = np.concatenate([global_orient, body_pose], axis=-1)
     else:
         raise ValueError(f"Cannot find pose data in keys: {list(motion_data.keys())}")
 
-    if 'trans' in motion_data:
-        trans = motion_data['trans']
-    elif 'transl' in motion_data:
-        trans = motion_data['transl']
+    if "trans" in motion_data:
+        trans = motion_data["trans"]
+    elif "transl" in motion_data:
+        trans = motion_data["transl"]
     else:
         raise ValueError(f"Cannot find translation data in keys: {list(motion_data.keys())}")
 
@@ -393,14 +356,14 @@ def load_data(subject, scene):
 
     # Extract gender from motion data if available
     gender = None
-    if 'gender' in motion_data:
-        gender = str(motion_data['gender'])
+    if "gender" in motion_data:
+        gender = str(motion_data["gender"])
         print(f"  Detected gender: {gender}")
 
     return betas, poses, trans, gender
 
 
-def initialize_smpl_model(model_type='neutral'):
+def initialize_smpl_model(model_type="neutral"):
     """
     Initialize SMPL body model using smplx library.
 
@@ -412,17 +375,12 @@ def initialize_smpl_model(model_type='neutral'):
     """
     print(f"Initializing SMPL model (type: {model_type})...")
 
-    if model_type.lower() not in ['neutral', 'male', 'female']:
+    if model_type.lower() not in ["neutral", "male", "female"]:
         raise ValueError(f"Invalid model type: {model_type}. Must be 'neutral', 'male', or 'female'")
 
     import smplx
-    model = smplx.create(
-        "data/smpl/",
-        model_type='smpl',
-        gender=model_type.lower(),
-        ext='pkl',
-        batch_size=1
-    )
+
+    model = smplx.create("data/smpl/", model_type="smpl", gender=model_type.lower(), ext="pkl", batch_size=1)
 
     print("  SMPL model loaded successfully")
     return model
@@ -433,35 +391,27 @@ def create_floor_mesh():
     grid_size = 4.0
 
     # Create a simple quad at y=0
-    vertices = np.array([
-        [-grid_size, 0, -grid_size],
-        [grid_size, 0, -grid_size],
-        [-grid_size, 0, grid_size],
-        [grid_size, 0, grid_size]
-    ])
+    vertices = np.array(
+        [[-grid_size, 0, -grid_size], [grid_size, 0, -grid_size], [-grid_size, 0, grid_size], [grid_size, 0, grid_size]]
+    )
 
     # Two triangles with CCW winding for upward normals
-    faces = np.array([
-        [0, 2, 1],  # First triangle
-        [1, 2, 3]   # Second triangle
-    ])
+    faces = np.array([[0, 2, 1], [1, 2, 3]])  # First triangle  # Second triangle
 
     floor_mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
     floor_mesh.visual.vertex_colors = [150, 150, 180, 150]  # Light blue-gray
 
     # Material with double-sided rendering
     material = pyrender.MetallicRoughnessMaterial(
-        metallicFactor=0.0,
-        roughnessFactor=0.8,
-        alphaMode='BLEND',
-        doubleSided=True
+        metallicFactor=0.0, roughnessFactor=0.8, alphaMode="BLEND", doubleSided=True
     )
 
     return pyrender.Mesh.from_trimesh(floor_mesh, material=material, smooth=False)
 
 
-def render_frame_with_camera(smpl_model, betas, pose, transl, renderer,
-                              camera_azimuth=0, camera_elevation=15, cam_distance=3.0):
+def render_frame_with_camera(
+    smpl_model, betas, pose, transl, renderer, camera_azimuth=0, camera_elevation=15, cam_distance=3.0
+):
     """
     Render a single frame with configurable camera angle.
 
@@ -491,11 +441,7 @@ def render_frame_with_camera(smpl_model, betas, pose, transl, renderer,
     # Forward pass through SMPL
     with torch.no_grad():
         output = smpl_model(
-            betas=betas,
-            global_orient=global_orient,
-            body_pose=body_pose,
-            transl=transl,
-            return_verts=True
+            betas=betas, global_orient=global_orient, body_pose=body_pose, transl=transl, return_verts=True
         )
 
     vertices = output.vertices.detach().cpu().numpy()[0]
@@ -520,20 +466,10 @@ def render_frame_with_camera(smpl_model, betas, pose, transl, renderer,
 
     # Add directional lights
     light1 = pyrender.DirectionalLight(color=[1.0, 1.0, 1.0], intensity=2.0)
-    scene.add(light1, pose=np.array([
-        [1, 0, 0, 0],
-        [0, 1, 0, 3],
-        [0, 0, 1, 3],
-        [0, 0, 0, 1]
-    ]))
+    scene.add(light1, pose=np.array([[1, 0, 0, 0], [0, 1, 0, 3], [0, 0, 1, 3], [0, 0, 0, 1]]))
 
     light2 = pyrender.DirectionalLight(color=[1.0, 1.0, 1.0], intensity=1.5)
-    scene.add(light2, pose=np.array([
-        [-1, 0, 0, 0],
-        [0, 1, 0, 3],
-        [0, 0, -1, -3],
-        [0, 0, 0, 1]
-    ]))
+    scene.add(light2, pose=np.array([[-1, 0, 0, 0], [0, 1, 0, 3], [0, 0, -1, -3], [0, 0, 0, 1]]))
 
     # Position camera based on azimuth, elevation, and distance
     mesh_center = vertices.mean(axis=0)
@@ -597,13 +533,13 @@ def main(args):
 
         # Auto-select model type if detected
         model_type = args.model
-        if args.model == 'neutral' and detected_gender and detected_gender.lower() in ['male', 'female']:
+        if args.model == "neutral" and detected_gender and detected_gender.lower() in ["male", "female"]:
             print(f"  Auto-selecting {detected_gender} model based on data")
             model_type = detected_gender.lower()
 
     except FileNotFoundError as e:
         print(f"\nError: {e}")
-        data_path = Path('data', 'fitted_smpl_all_3')
+        data_path = Path("data", "fitted_smpl_all_3")
         print(f"\nAvailable subjects in {data_path}:")
         if data_path.exists():
             subjects = sorted([d.name for d in data_path.iterdir() if d.is_dir()])
@@ -625,8 +561,8 @@ def main(args):
     renderer = setup_renderer_live(args.resolution, args.resolution)
 
     # Downsample frames if requested
-    poses = poses[::args.downsample]
-    trans = trans[::args.downsample]
+    poses = poses[:: args.downsample]
+    trans = trans[:: args.downsample]
     total_frames = len(poses)
 
     print(f"\nTotal frames: {total_frames}")
@@ -636,30 +572,34 @@ def main(args):
     # Setup matplotlib figure
     fig, ax = plt.subplots(figsize=(10, 10))
     plt.subplots_adjust(bottom=0.20)  # More space for two sliders
-    ax.axis('off')
-    ax.set_title('SMPL Mesh Viewer (Arrow keys: rotate, Scroll: zoom, Space: pause)')
+    ax.axis("off")
+    ax.set_title("SMPL Mesh Viewer (Arrow keys: rotate, Scroll: zoom, Space: pause)")
 
     # UI State
     ui_state = {
-        'frame': 0,
-        'paused': False,
-        'anim': None,
-        'camera_azimuth': 0,
-        'camera_elevation': 15,
-        'cam_distance': 3.0,  # Closer default for better visibility
-        'beta_value': 0.0,  # Uniform beta value for all 10 shape params
-        'original_betas': betas.clone(),  # Original betas from npz data
-        'betas': betas.clone(),  # Mutable copy of betas (used for rendering)
-        'override_betas': False  # Whether to use slider value or original betas
+        "frame": 0,
+        "paused": False,
+        "anim": None,
+        "camera_azimuth": 0,
+        "camera_elevation": 15,
+        "cam_distance": 3.0,  # Closer default for better visibility
+        "beta_value": 0.0,  # Uniform beta value for all 10 shape params
+        "original_betas": betas.clone(),  # Original betas from npz data
+        "betas": betas.clone(),  # Mutable copy of betas (used for rendering)
+        "override_betas": False,  # Whether to use slider value or original betas
     }
 
     # Pre-render first frame
     print("Rendering first frame...")
     initial_frame = render_frame_with_camera(
-        smpl_model, ui_state['betas'], poses[0], trans[0], renderer,
-        ui_state['camera_azimuth'],
-        ui_state['camera_elevation'],
-        ui_state['cam_distance']
+        smpl_model,
+        ui_state["betas"],
+        poses[0],
+        trans[0],
+        renderer,
+        ui_state["camera_azimuth"],
+        ui_state["camera_elevation"],
+        ui_state["cam_distance"],
     )
     img_display = ax.imshow(initial_frame)
 
@@ -667,23 +607,29 @@ def main(args):
     def update_visuals(frame_idx):
         """Render and display a specific frame."""
         frame_rgb = render_frame_with_camera(
-            smpl_model, ui_state['betas'], poses[frame_idx], trans[frame_idx], renderer,
-            ui_state['camera_azimuth'],
-            ui_state['camera_elevation'],
-            ui_state['cam_distance']
+            smpl_model,
+            ui_state["betas"],
+            poses[frame_idx],
+            trans[frame_idx],
+            renderer,
+            ui_state["camera_azimuth"],
+            ui_state["camera_elevation"],
+            ui_state["cam_distance"],
         )
         img_display.set_data(frame_rgb)
-        beta_status = f'Beta: {ui_state["beta_value"]:.1f}' if ui_state['override_betas'] else 'Beta: original'
-        ax.set_title(f'Frame {frame_idx * args.downsample} / {total_frames * args.downsample - 1} | '
-                     f'Az: {ui_state["camera_azimuth"]}° El: {ui_state["camera_elevation"]}° '
-                     f'Dist: {ui_state["cam_distance"]:.1f} | {beta_status}')
+        beta_status = f'Beta: {ui_state["beta_value"]:.1f}' if ui_state["override_betas"] else "Beta: original"
+        ax.set_title(
+            f"Frame {frame_idx * args.downsample} / {total_frames * args.downsample - 1} | "
+            f'Az: {ui_state["camera_azimuth"]}° El: {ui_state["camera_elevation"]}° '
+            f'Dist: {ui_state["cam_distance"]:.1f} | {beta_status}'
+        )
 
     # Animation frame callback
     def on_frame(frame):
-        if ui_state['paused']:
+        if ui_state["paused"]:
             return [img_display]
 
-        ui_state['frame'] = frame
+        ui_state["frame"] = frame
         frame_slider.eventson = False
         frame_slider.set_val(frame)
         frame_slider.eventson = True
@@ -693,51 +639,51 @@ def main(args):
 
     # Keyboard handler for camera control
     def on_key(event):
-        if event.key == 'left':
-            ui_state['camera_azimuth'] = (ui_state['camera_azimuth'] - 15) % 360
-        elif event.key == 'right':
-            ui_state['camera_azimuth'] = (ui_state['camera_azimuth'] + 15) % 360
-        elif event.key == 'up':
-            ui_state['camera_elevation'] = min(ui_state['camera_elevation'] + 10, 80)
-        elif event.key == 'down':
-            ui_state['camera_elevation'] = max(ui_state['camera_elevation'] - 10, -20)
-        elif event.key == ' ':
+        if event.key == "left":
+            ui_state["camera_azimuth"] = (ui_state["camera_azimuth"] - 15) % 360
+        elif event.key == "right":
+            ui_state["camera_azimuth"] = (ui_state["camera_azimuth"] + 15) % 360
+        elif event.key == "up":
+            ui_state["camera_elevation"] = min(ui_state["camera_elevation"] + 10, 80)
+        elif event.key == "down":
+            ui_state["camera_elevation"] = max(ui_state["camera_elevation"] - 10, -20)
+        elif event.key == " ":
             toggle_pause(None)
             return
         else:
             return
 
         # Re-render current frame with new camera angle
-        update_visuals(ui_state['frame'])
+        update_visuals(ui_state["frame"])
         fig.canvas.draw_idle()
 
     # Scroll handler for zoom
     def on_scroll(event):
         zoom_factor = 0.5
-        if event.button == 'up':  # Scroll up -> zoom in
-            ui_state['cam_distance'] = max(1.5, ui_state['cam_distance'] - zoom_factor)
-        elif event.button == 'down':  # Scroll down -> zoom out
-            ui_state['cam_distance'] = min(15.0, ui_state['cam_distance'] + zoom_factor)
+        if event.button == "up":  # Scroll up -> zoom in
+            ui_state["cam_distance"] = max(1.5, ui_state["cam_distance"] - zoom_factor)
+        elif event.button == "down":  # Scroll down -> zoom out
+            ui_state["cam_distance"] = min(15.0, ui_state["cam_distance"] + zoom_factor)
 
         # Re-render current frame with new zoom
-        update_visuals(ui_state['frame'])
+        update_visuals(ui_state["frame"])
         fig.canvas.draw_idle()
 
     # Connect event handlers
-    fig.canvas.mpl_connect('key_press_event', on_key)
-    fig.canvas.mpl_connect('scroll_event', on_scroll)
+    fig.canvas.mpl_connect("key_press_event", on_key)
+    fig.canvas.mpl_connect("scroll_event", on_scroll)
 
     # Frame slider widget
     ax_frame_slider = plt.axes((0.2, 0.10, 0.55, 0.03))
-    frame_slider = Slider(ax_frame_slider, 'Frame', 0, total_frames - 1, valinit=0, valfmt='%d')
+    frame_slider = Slider(ax_frame_slider, "Frame", 0, total_frames - 1, valinit=0, valfmt="%d")
 
     def update_frame_slider(val):
         frame = int(frame_slider.val)
-        ui_state['frame'] = frame
-        ui_state['paused'] = True
+        ui_state["frame"] = frame
+        ui_state["paused"] = True
         button.label.set_text("Play")
-        if ui_state['anim']:
-            ui_state['anim'].event_source.stop()
+        if ui_state["anim"]:
+            ui_state["anim"].event_source.stop()
 
         update_visuals(frame)
         fig.canvas.draw_idle()
@@ -746,51 +692,51 @@ def main(args):
 
     # Beta slider widget (uniform body shape - "fatness")
     ax_beta_slider = plt.axes((0.2, 0.05, 0.55, 0.03))
-    beta_slider = Slider(ax_beta_slider, 'Beta', -10.0, 10.0, valinit=0.0, valfmt='%.1f')
+    beta_slider = Slider(ax_beta_slider, "Beta", -10.0, 10.0, valinit=0.0, valfmt="%.1f")
 
     def update_beta_slider(val):
         beta_val = beta_slider.val
-        ui_state['beta_value'] = beta_val
+        ui_state["beta_value"] = beta_val
         # Only apply slider value if override is enabled
-        if ui_state['override_betas']:
-            ui_state['betas'] = torch.full((1, 10), beta_val, dtype=torch.float32)
-            update_visuals(ui_state['frame'])
+        if ui_state["override_betas"]:
+            ui_state["betas"] = torch.full((1, 10), beta_val, dtype=torch.float32)
+            update_visuals(ui_state["frame"])
             fig.canvas.draw_idle()
 
     beta_slider.on_changed(update_beta_slider)
 
     # Beta override checkbox
     ax_checkbox = plt.axes((0.8, 0.04, 0.15, 0.05))
-    checkbox = CheckButtons(ax_checkbox, ['Override'], [False])
+    checkbox = CheckButtons(ax_checkbox, ["Override"], [False])
 
     def update_checkbox(_label):
-        ui_state['override_betas'] = not ui_state['override_betas']
-        if ui_state['override_betas']:
+        ui_state["override_betas"] = not ui_state["override_betas"]
+        if ui_state["override_betas"]:
             # Apply slider value
-            ui_state['betas'] = torch.full((1, 10), ui_state['beta_value'], dtype=torch.float32)
+            ui_state["betas"] = torch.full((1, 10), ui_state["beta_value"], dtype=torch.float32)
         else:
             # Restore original betas
-            ui_state['betas'] = ui_state['original_betas'].clone()
+            ui_state["betas"] = ui_state["original_betas"].clone()
 
-        update_visuals(ui_state['frame'])
+        update_visuals(ui_state["frame"])
         fig.canvas.draw_idle()
 
     checkbox.on_clicked(update_checkbox)
 
     # Play/Pause button
     ax_button = plt.axes((0.8, 0.10, 0.1, 0.04))
-    button = Button(ax_button, 'Pause')
+    button = Button(ax_button, "Pause")
 
     def toggle_pause(event):
-        ui_state['paused'] = not ui_state['paused']
-        if ui_state['paused']:
+        ui_state["paused"] = not ui_state["paused"]
+        if ui_state["paused"]:
             button.label.set_text("Play")
-            if ui_state['anim']:
-                ui_state['anim'].event_source.stop()
+            if ui_state["anim"]:
+                ui_state["anim"].event_source.stop()
         else:
             button.label.set_text("Pause")
-            if ui_state['anim']:
-                ui_state['anim'].event_source.start()
+            if ui_state["anim"]:
+                ui_state["anim"].event_source.start()
 
     button.on_clicked(toggle_pause)
 
@@ -806,26 +752,20 @@ def main(args):
     print("  Beta Slider:       Adjust body shape (-10 to +10, uniform 'fatness')")
     print("  Override Checkbox: Enable to use slider betas, disable for original betas")
 
-    anim = FuncAnimation(
-        fig, on_frame,
-        frames=range(total_frames),
-        interval=interval,
-        blit=False,
-        repeat=True
-    )
-    ui_state['anim'] = anim
+    anim = FuncAnimation(fig, on_frame, frames=range(total_frames), interval=interval, blit=False, repeat=True)
+    ui_state["anim"] = anim
 
     # Cleanup on close
     def on_close(event):
         print("\nCleaning up renderer...")
         renderer.delete()
 
-    fig.canvas.mpl_connect('close_event', on_close)
+    fig.canvas.mpl_connect("close_event", on_close)
 
     plt.show()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     args = parse_arguments()
     setup_rendering_backend(args.gpu_id)
     main(args)
