@@ -40,6 +40,20 @@ All data files are stored in the `data/` directory (gitignored). See [DATA.MD](D
 | `utils/` | Utility functions |
 | `visualize_joints/` | Joint visualization utilities |
 
+### Documentation
+
+See `docs/` directory for detailed information:
+- **Van_Criekinge_Dataset.md**: Details of the Van Criekinge Dataset, including data structure and formats. Highly valuable.
+- **AMASS_Archieve_Motion_Capture**: A
+- The `Legacy/` folder contains AI-generated note based on the previous studnet (Eugene)'s lab journal, containing:
+   - **Legacy/Dataset Overview** : Additional Van Criekinge dataset information, mostly repeated
+   - **Legacy/1 VC Pipeline/**: Processing pipeline stages and known fixes
+   - **Legacy2 Closer Look at VC/**: Pipeline failure analysis and investigation
+   - **Legacy/3 Solutions/**: Proposed solutions and marker fitting approaches
+   - **Legacy/4 Codebase Adaptation**: Integration details and age conditioning architecture
+   - **Legacy/Tools/**: Visualization and debugging utilities
+   Most of them are not very useful, but `docs/Dataset Overview.md` and `docs/1 VC Pipeline/Pipeline Overview.md` are Must-Reads.
+
 ---
 
 ## Key Files
@@ -93,14 +107,6 @@ The processing pipeline follows these steps:
 
 ---
 
-## Key Improvements Over v1
-
-- **Corrected SMPL marker fitting** - The primary fix in this v2 pipeline
-- **Production-ready** - Validated output for training
-- **Proper joint alignment** - Accurate motion representation
-
----
-
 ## Usage
 
 ### Setup
@@ -143,24 +149,6 @@ python3 render_smpl_mesh.py -s 02 -c 0 --model female  # With specific model
 # Inspect original C3D data
 python inspect_file.py
 ```
-
----
-
-## Requirements
-
-- Python 3.x
-- Van Criekinge dataset (see [DATA.MD](DATA.MD))
-- SMPL body models (see [DATA.MD](DATA.MD))
-- Dependencies for C3D processing, SMPL fitting, and visualization
-- See `environment.yml` for conda environment setup
-
----
-
-## Documentation
-
-For detailed information about the marker fitting corrections and technical implementation details, refer to the project wiki documentation on "New Marker Fitting".
-
----
 
 ## Dependencies & Installation
 
