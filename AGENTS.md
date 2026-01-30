@@ -75,6 +75,7 @@ All data files are stored in the `data/` directory (gitignored). See [DATA.MD](D
 See `docs/` directory for detailed information:
 - **Van_Criekinge_Dataset.md**: Details of the Van Criekinge Dataset, including data structure and formats. Highly valuable.
 - **AMASS_Archieve_Motion_Capture**: Details about the proccessing pipeline of the AMASS dataset, critical for understanding the software `Mosh++`, which fits smpl mesh onto MoCap markers.
+- **MoShPP_Configuration.md**: MoSh++ body model configuration details, including model selection, directory structure, configuration parameters, and model file requirements for SMPL/SMPLH/SMPLX/MANO.
 - The `Legacy/` folder contains AI-generated note based on the previous studnet (Eugene)'s lab journal, containing:
    - **Legacy/Dataset Overview** : Additional Van Criekinge dataset information, mostly repeated
    - **Legacy/1 VC Pipeline/**: Processing pipeline stages and known fixes
