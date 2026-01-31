@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-SMPL-X fitting for Van Criekinge dataset using SOMA MoSh++.
+SMPL fitting for Van Criekinge dataset using SOMA MoSh++.
 
-This script uses soma.amass.mosh_manual (alias for moshpp) to fit SMPL-X
+This script uses soma.amass.mosh_manual (alias for moshpp) to fit SMPL
 body models to Vicon marker data from the Van Criekinge dataset.
 
     Usage:
@@ -13,13 +13,13 @@ body models to Vicon marker data from the Van Criekinge dataset.
             /bin/bash -lc ". /root/miniconda3/etc/profile.d/conda.sh && conda activate soma && python /project/2_fit_smpl_markers_moshpp.py \
                 --c3d_path /data/van_criekinge_unprocessed_1/able_bodied/SUBJ01/SUBJ1_1.c3d \
                 --out_dir /data/fitted_smpl_all_3_moshpp \
-                --support_dir /data/smplx"
+                --support_dir /data/smpl_mosh_fixed"
 
 Output structure:
     {out_dir}/
     └── {subject_id}/
         ├── betas.npy                          # Body shape (10,)
-        └── {trial_name}_smplx_params.npz      # Motion data + params (SMPL-X format)
+        └── {trial_name}_smpl_params.npz      # Motion data + params (SMPL format)
 """
 
 import os
@@ -93,8 +93,8 @@ def run_mosh_on_c3d(
             "moshpp.verbosity": 1,
             "dirs.work_base_dir": work_dir,
             "dirs.support_base_dir": support_dir,
-            "surface_model.type": "smplx",
-            "opt_settings.weights_type": "smplx",
+            "surface_model.type": "smpl",
+            "opt_settings.weights_type": "smpl",
         },
         render_cfg=None,
         parallel_cfg={
@@ -133,9 +133,9 @@ def convert_soma_output(
     """
     Convert SOMA MoSh++ output to our expected npz format.
 
-    SOMA moshpp outputs SMPL-X format: global_orient, body_pose, betas, trans, etc.
-    SMPL-X has 55 joints and 165 pose parameters (including hand and face poses).
-    We preserve the full SMPL-X format for downstream processing.
+    SOMA moshpp outputs SMPL format: global_orient, body_pose, betas, trans, etc.
+    SMPL has 24 joints and 72 pose parameters (69 body + 3 global orientation).
+    We preserve the full SMPL format for downstream processing.
     """
     logger.info(f"Converting SOMA output: {mosh_npz_path}")
 
@@ -147,7 +147,7 @@ def convert_soma_output(
     os.makedirs(subject_out_dir, exist_ok=True)
 
     betas_path = osp.join(subject_out_dir, "betas.npy")
-    trial_path = osp.join(subject_out_dir, f"{trial_name}_smplx_params.npz")
+    trial_path = osp.join(subject_out_dir, f"{trial_name}_smpl_params.npz")
 
     if "betas" in mosh_data:
         final_betas = mosh_data["betas"]
@@ -198,8 +198,8 @@ def convert_soma_output(
         if isinstance(final_joints, torch.Tensor):
             final_joints = final_joints.detach().cpu().numpy()
     else:
-        # SMPL-X has 55 joints (24 body + 3 jaw/eyes + 30 hand joints)
-        final_joints = np.zeros((n_frames, 55, 3))
+        # SMPL has 24 joints (23 body + 1 root)
+        final_joints = np.zeros((n_frames, 24, 3))
 
     np.savez(
         trial_path,
@@ -213,7 +213,7 @@ def convert_soma_output(
         n_frames=n_frames,
         joints=final_joints,
     )
-    logger.info(f"Saved SMPL-X parameters to: {trial_path}")
+    logger.info(f"Saved SMPL parameters to: {trial_path}")
 
     metadata = {
         "subject_id": subject_id,
@@ -223,9 +223,9 @@ def convert_soma_output(
         "fps": fps,
         "marker_set": "plug_in_gait",
         "input_c3d": c3d_path,
-        "model_type": "smplx",
-        "n_joints": 55,
-        "n_pose_params": final_poses.shape[-1] if final_poses.ndim > 1 else 165,
+        "model_type": "smpl",
+        "n_joints": 24,
+        "n_pose_params": final_poses.shape[-1] if final_poses.ndim > 1 else 72,
     }
     meta_path = osp.join(subject_out_dir, f"{trial_name}_metadata.json")
     with open(meta_path, "w") as f:
@@ -241,12 +241,12 @@ def convert_soma_output(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Fit SMPL-X to Van Criekinge markers using SOMA MoSh++",
+        description="Fit SMPL to Van Criekinge markers using SOMA MoSh++",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Run in SOMA docker with SMPL-X models
-  python 2_fit_smpl_markers_moshpp.py --c3d_path data/van_criekinge_unprocessed_1/able_bodied/SUBJ01/SUBJ1_1.c3d --out_dir data/fitted_smpl_all_3_moshpp --support_dir /data/smplx --gender neutral
+  # Run in SOMA docker with SMPL models
+  python 2_fit_smpl_markers_moshpp.py --c3d_path data/van_criekinge_unprocessed_1/able_bodied/SUBJ01/SUBJ1_1.c3d --out_dir data/fitted_smpl_all_3_moshpp --support_dir /data/smpl_mosh_fixed --gender neutral
         """,
     )
 
@@ -263,7 +263,7 @@ Examples:
         "--support_dir",
         type=str,
         default=None,
-        help="SOMA support directory (contains SMPL-X models, default: /data/smplx)",
+        help="SOMA support directory (contains SMPL models, default: /data/smpl_mosh_fixed)",
     )
     parser.add_argument(
         "--gender",
@@ -291,13 +291,13 @@ Examples:
         raise FileNotFoundError(f"C3D file not found: {args.c3d_path}")
 
     if args.support_dir is None:
-        # Default to smplx models directory
-        args.support_dir = "/data/smplx"
+        # Default to smpl models directory
+        args.support_dir = "/data/smpl_mosh_fixed"
 
     if not osp.exists(args.support_dir):
         logger.warning(f"Support dir not found: {args.support_dir}")
-        logger.info("Attempting to use fallback: /data/smplx")
-        args.support_dir = "/data/smplx"
+        logger.info("Attempting to use fallback: /data/smpl_mosh_fixed")
+        args.support_dir = "/data/smpl_mosh_fixed"
 
     os.makedirs(args.out_dir, exist_ok=True)
 
