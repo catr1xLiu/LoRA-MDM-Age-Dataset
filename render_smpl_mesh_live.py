@@ -297,7 +297,7 @@ def load_data(subject, scene):
     subj_id = f"SUBJ{subject}"
 
     # Data directory relative to script location (in parent directory)
-    data_dir = os.path.join("data", "fitted_smpl_all_3", subj_id)
+    data_dir = os.path.join("data", "fitted_smpl_all_3_new", subj_id)
 
     # Load shape parameters (betas) - constant for subject
     betas_path = os.path.join(data_dir, "betas.npy")
