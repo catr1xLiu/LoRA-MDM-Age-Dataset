@@ -87,6 +87,7 @@ uv run python -m src.fit_markers \
   --processed_dir ../data/processed_markers_all_2 \
   --models_dir ../data/smpl \
   --out_dir ../data/fitted_smpl_all_3_new \
+  --device cuda \
   --subject SUBJ01 --trial SUBJ1_0
 ```
 
