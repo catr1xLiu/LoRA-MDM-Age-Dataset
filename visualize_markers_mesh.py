@@ -42,8 +42,286 @@ import matplotlib.pyplot as plt
 from matplotlib.widgets import Slider, Button, CheckButtons
 from matplotlib.animation import FuncAnimation
 
+# Note: We're using the mapping information from human_body_prior/src/labels_map.py
+# but implementing the filtering logic directly here for clarity
+
+# ============================================================================
+# MARKER FILTERING LOGIC
+# ============================================================================
+
+# Fitting markers from the user-provided list (35 markers)
+# These are the markers used by the fitting code
+FITTING_MARKERS = [
+    "LFHD",
+    "RFHD",
+    "LBHD",
+    "RBHD",
+    "C7",
+    "T10",
+    "CLAV",
+    "STRN",
+    "LSHO",
+    "LELB",
+    "LIWR",
+    "LOWR",
+    "LFIN",
+    "RSHO",
+    "RELB",
+    "RIWR",
+    "ROWR",
+    "RFIN",
+    "LFWT",
+    "RFWT",
+    "SACR",
+    "LTHI",
+    "LKNE",
+    "LTIB",
+    "LANK",
+    "LHEE",
+    "LTOE",
+    "RTHI",
+    "RKNE",
+    "RTIB",
+    "RANK",
+    "RHEE",
+    "RTOE",
+    "LTIP",
+    "RTIP",
+]
+
+# Create mapping from fitting marker names to data marker names
+# Based on labels_map.py from human_body_prior (reverse mapping)
+# labels_map.py maps data names → fitting names, so we need the inverse
+FITTING_TO_DATA_MAP = {
+    # Head markers (same in both)
+    "LFHD": "LFHD",
+    "RFHD": "RFHD",
+    "LBHD": "LBHD",
+    "RBHD": "RBHD",
+    # Spine markers (same in both)
+    "C7": "C7",
+    "T10": "T10",
+    "CLAV": "CLAV",
+    "STRN": "STRN",
+    # Shoulder markers (same in both)
+    "LSHO": "LSHO",
+    "RSHO": "RSHO",
+    # Elbow markers (same in both)
+    "LELB": "LELB",
+    "RELB": "RELB",
+    # Wrist markers: labels_map.py shows LWRA → LIWR, LWRB → LOWR
+    "LIWR": "LWRA",  # Left inner wrist (LWRA maps to LIWR)
+    "LOWR": "LWRB",  # Left outer wrist (LWRB maps to LOWR)
+    "RIWR": "RWRA",  # Right inner wrist (RWRA maps to RIWR)
+    "ROWR": "RWRB",  # Right outer wrist (RWRB maps to ROWR)
+    # Hand markers (same in both)
+    "LFIN": "LFIN",
+    "RFIN": "RFIN",
+    # Waist markers: labels_map.py shows LASI → LFWT, RASI → RFWT
+    "LFWT": "LASI",  # Left front waist (LASI maps to LFWT)
+    "RFWT": "RASI",  # Right front waist (RASI maps to RFWT)
+    # Pelvis marker (same in both)
+    "SACR": "SACR",
+    # Leg markers: labels_map.py shows LTHI → LTHI (same)
+    "LTHI": "LTHI",  # Left thigh
+    "RTHI": "RTHI",  # Right thigh
+    # Knee markers (same in both)
+    "LKNE": "LKNE",
+    "RKNE": "RKNE",
+    # Shank markers: labels_map.py shows LTIB → LTIB (same)
+    "LTIB": "LTIB",  # Left tibia
+    "RTIB": "RTIB",  # Right tibia
+    # Ankle markers (same in both)
+    "LANK": "LANK",
+    "RANK": "RANK",
+    # Heel markers (same in both)
+    "LHEE": "LHEE",
+    "RHEE": "RHEE",
+    # Toe markers (same in both)
+    "LTOE": "LTOE",
+    "RTOE": "RTOE",
+    # Toe tip markers: Check if LTIP/RTIP exist in data
+    "LTIP": "LTIP",  # Left toe tip
+    "RTIP": "RTIP",  # Right toe tip
+}
+
+# Skeleton markers from MARKER_SKELETON definition
+# Extract all unique marker names from skeleton connections
+SKELETON_MARKERS = [
+    "SACR",
+    "TRXO",
+    "HEDO",
+    "LCLO",
+    "RCLO",
+    "LHUO",
+    "LRAO",
+    "LHNO",
+    "LFEP",
+    "LFEO",
+    "LTIO",
+    "LFOO",
+    "RFEP",
+    "RFEO",
+    "RTIO",
+    "RFOO",
+    "RHUO",
+    "RRAO",
+    "RHNO",
+]
+
+
+def get_marker_categories(marker_names):
+    """
+    Categorize markers into three groups based on their usage.
+
+    Args:
+        marker_names: Array of marker names from data (e.g., from NPZ file)
+
+    Returns:
+        Tuple of three lists:
+        - fitting_indices: Indices of markers used for fitting (big blue dots)
+        - skeleton_indices: Indices of markers used only for skeleton (small gray dots)
+        - other_indices: Indices of markers not used for either (hidden)
+    """
+    fitting_indices = []
+    skeleton_indices = []
+    other_indices = []
+
+    # Convert marker_names to list of strings for easier comparison
+    marker_names_list = [str(name) for name in marker_names]
+
+    # Find fitting markers in data
+    for fitting_marker in FITTING_MARKERS:
+        data_marker = FITTING_TO_DATA_MAP.get(fitting_marker, fitting_marker)
+        if data_marker in marker_names_list:
+            idx = marker_names_list.index(data_marker)
+            fitting_indices.append(idx)
+
+    # Find skeleton markers in data (excluding those already in fitting)
+    for skeleton_marker in SKELETON_MARKERS:
+        if skeleton_marker in marker_names_list:
+            idx = marker_names_list.index(skeleton_marker)
+            if idx not in fitting_indices:
+                skeleton_indices.append(idx)
+
+    # All other markers
+    for i in range(len(marker_names_list)):
+        if i not in fitting_indices and i not in skeleton_indices:
+            other_indices.append(i)
+
+    return fitting_indices, skeleton_indices, other_indices
+
+
+def filter_markers(marker_data, marker_names):
+    """
+    Filter marker data and names based on usage categories.
+
+    Args:
+        marker_data: Array of shape (n_frames, n_markers, 3)
+        marker_names: Array of marker names
+
+    Returns:
+        Tuple of:
+        - filtered_data: Marker data with only fitting and skeleton markers
+        - filtered_names: Corresponding marker names
+        - category_info: Dictionary with category information
+    """
+    fitting_indices, skeleton_indices, other_indices = get_marker_categories(marker_names)
+
+    # Combine fitting and skeleton indices (in that order)
+    visible_indices = fitting_indices + skeleton_indices
+
+    # Filter data and names
+    filtered_data = marker_data[:, visible_indices, :]
+    filtered_names = marker_names[visible_indices]
+
+    # Create category information for visualization
+    category_info = {
+        "fitting_indices": fitting_indices,
+        "skeleton_indices": skeleton_indices,
+        "other_indices": other_indices,
+        "visible_indices": visible_indices,
+        "n_fitting": len(fitting_indices),
+        "n_skeleton": len(skeleton_indices),
+        "n_other": len(other_indices),
+        "n_total": len(marker_names),
+    }
+
+    return filtered_data, filtered_names, category_info
+
+
+def validate_skeleton_with_filtering(marker_names, skeleton_definition):
+    """
+    Validate skeleton connections with filtered markers.
+
+    Args:
+        marker_names: Array of marker names (already filtered)
+        skeleton_definition: List of (parent_name, child_name) tuples
+
+    Returns:
+        Tuple of:
+        - valid_connections: List of (idx1, idx2) integer tuples
+        - missing_markers: Set of marker names not found in data
+    """
+    valid_connections = []
+    missing_markers = set()
+
+    # Convert marker_names to list of strings
+    marker_names_list = [str(name) for name in marker_names]
+
+    for p1_name, p2_name in skeleton_definition:
+        # Find indices of these markers
+        idx1 = marker_names_list.index(p1_name) if p1_name in marker_names_list else -1
+        idx2 = marker_names_list.index(p2_name) if p2_name in marker_names_list else -1
+
+        if idx1 >= 0 and idx2 >= 0:
+            valid_connections.append((idx1, idx2))
+        else:
+            if idx1 < 0:
+                missing_markers.add(p1_name)
+            if idx2 < 0:
+                missing_markers.add(p2_name)
+
+    return valid_connections, missing_markers
+
+
+def print_marker_summary(category_info):
+    """Print summary of marker categories."""
+    print("\n" + "=" * 60)
+    print("MARKER FILTERING SUMMARY")
+    print("=" * 60)
+    print(f"Total markers in data: {category_info['n_total']}")
+    print(f"Fitting markers (big blue dots): {category_info['n_fitting']}")
+    print(f"Skeleton-only markers (small gray dots): {category_info['n_skeleton']}")
+    print(f"Hidden markers: {category_info['n_other']}")
+    print("=" * 60)
+
+    if category_info["n_other"] > 0:
+        print(f"\nNote: {category_info['n_other']} markers are hidden (not used for fitting or skeleton)")
+
+    # Print fitting markers found
+    if category_info["n_fitting"] > 0:
+        print("\nFitting markers found in data:")
+        for i, idx in enumerate(category_info["fitting_indices"][:10]):
+            print(f"  {i + 1}. Index {idx}")
+        if len(category_info["fitting_indices"]) > 10:
+            print(f"  ... and {len(category_info['fitting_indices']) - 10} more")
+
+    # Print skeleton-only markers found
+    if category_info["n_skeleton"] > 0:
+        print("\nSkeleton-only markers found in data:")
+        for i, idx in enumerate(category_info["skeleton_indices"][:10]):
+            print(f"  {i + 1}. Index {idx}")
+        if len(category_info["skeleton_indices"]) > 10:
+            print(f"  ... and {len(category_info['skeleton_indices']) - 10} more")
+
+
+# ============================================================================
+# END OF MARKER FILTERING LOGIC
+# ============================================================================
+
 # Skeleton connections from inspect_file.py (marker labels)
-# Modified to use SACR (sacrum) as root instead of CentreOfMass
+# Using the full Van Criekinge skeleton definition with SACR as root
 MARKER_SKELETON = [
     ("SACR", "TRXO"),  # Spine (using SACR instead of CentreOfMass)
     ("TRXO", "HEDO"),  # Spine
@@ -561,14 +839,51 @@ def create_floor_mesh():
     return pyrender.Mesh.from_trimesh(floor_mesh, material=material, smooth=False)
 
 
+def get_skeleton_color(marker_name):
+    """
+    Get color for skeleton segment based on anatomical group.
+
+    Args:
+        marker_name: Marker label (e.g., 'SACR', 'LCLO', 'RFEP')
+
+    Returns:
+        tuple: (R, G, B, A) color values 0-1
+    """
+    # Spine markers
+    if marker_name in ["SACR", "TRXO", "HEDO"]:
+        return [0.0, 0.0, 1.0, 1.0]  # Blue
+
+    # Left arm markers
+    elif marker_name in ["LCLO", "LHUO", "LRAO", "LHNO"]:
+        return [1.0, 0.0, 0.0, 1.0]  # Red
+
+    # Right arm markers
+    elif marker_name in ["RCLO", "RHUO", "RRAO", "RHNO"]:
+        return [0.0, 1.0, 0.0, 1.0]  # Green
+
+    # Left leg markers
+    elif marker_name in ["LFEP", "LFEO", "LTIO", "LFOO"]:
+        return [1.0, 1.0, 0.0, 1.0]  # Yellow
+
+    # Right leg markers
+    elif marker_name in ["RFEP", "RFEO", "RTIO", "RFOO"]:
+        return [1.0, 0.0, 1.0, 1.0]  # Magenta
+
+    # Default (shouldn't happen for skeleton markers)
+    else:
+        return [0.5, 0.5, 0.5, 1.0]  # Gray
+
+
 def create_scene_with_markers_and_mesh(
     markers,
     skeleton_connections,
     mesh_vertices,
     mesh_faces,
+    marker_names=None,
     show_markers=True,
     show_skeleton=True,
     show_mesh=True,
+    category_info=None,
 ):
     """
     Create a pyrender scene with markers, skeleton lines, and SMPL mesh.
@@ -578,9 +893,12 @@ def create_scene_with_markers_and_mesh(
         skeleton_connections: List of (idx1, idx2) marker indices to connect
         mesh_vertices: (n_vertices, 3) SMPL mesh vertices
         mesh_faces: (n_faces, 3) SMPL mesh faces
+        marker_names: List of marker label names (optional, for skeleton coloring)
         show_markers: Whether to show marker points
         show_skeleton: Whether to show skeleton lines
         show_mesh: Whether to show SMPL mesh
+        category_info: Dictionary with marker category information (from filter_markers)
+                     If None, all markers are shown as fitting markers (big blue dots)
 
     Returns:
         pyrender.Scene: Scene with all elements added
@@ -590,30 +908,66 @@ def create_scene_with_markers_and_mesh(
     # Add SMPL mesh if visible
     if show_mesh:
         body_mesh = trimesh.Trimesh(vertices=mesh_vertices, faces=mesh_faces)
-        body_mesh.visual.vertex_colors = [174, 199, 232, 255]  # Light blue color
-        mesh_node = pyrender.Mesh.from_trimesh(body_mesh, smooth=True)
+        # Semi-transparent light blue mesh (alpha=0.6 = 153/255)
+        body_mesh.visual.vertex_colors = [
+            174,
+            199,
+            232,
+            153,
+        ]  # Light blue with 60% opacity
+
+        # Create material with transparency
+        mesh_material = pyrender.MetallicRoughnessMaterial(
+            baseColorFactor=[0.68, 0.78, 0.91, 0.6],  # RGBA with alpha=0.6
+            metallicFactor=0.0,
+            roughnessFactor=0.8,
+            alphaMode="BLEND",  # Enable transparency blending
+            doubleSided=True,  # Render both sides
+        )
+        mesh_node = pyrender.Mesh.from_trimesh(body_mesh, material=mesh_material, smooth=True)
         scene.add(mesh_node)
 
     # Add markers as points if visible
     if show_markers and len(markers) > 0:
-        # Create points with bright blue color
-        colors = np.zeros((len(markers), 4))
-        colors[:, 0] = 0.0  # R
-        colors[:, 1] = 0.4  # G (slightly greenish for better visibility)
-        colors[:, 2] = 1.0  # B (bright blue)
-        colors[:, 3] = 1.0  # Alpha
+        # Determine which markers are fitting vs skeleton-only
+        if category_info is not None:
+            # We have category information
+            n_fitting = category_info.get("n_fitting", 0)
+            fitting_indices = list(range(n_fitting))  # First n_fitting markers are fitting
+            skeleton_indices = list(range(n_fitting, len(markers)))  # Rest are skeleton-only
+        else:
+            # No category info - treat all as fitting markers
+            fitting_indices = list(range(len(markers)))
+            skeleton_indices = []
 
-        # Create mesh from points - use spheres instead of points for better visibility
-        # Create small spheres at each marker position
-        for i, point in enumerate(markers):
-            sphere = trimesh.creation.icosphere(subdivisions=1, radius=0.01)  # 1cm radius
+        # Create fitting markers (big blue dots)
+        for i in fitting_indices:
+            point = markers[i]
+            # Big sphere for fitting markers (2cm radius)
+            sphere = trimesh.creation.icosphere(subdivisions=1, radius=0.02)  # 2cm radius
             sphere.vertices += point  # Translate to marker position
 
-            # Create material with blue color
+            # Create material with bright blue color
             material = pyrender.MetallicRoughnessMaterial(
-                baseColorFactor=[0.0, 0.4, 1.0, 1.0],
+                baseColorFactor=[0.0, 0.4, 1.0, 1.0],  # Bright blue
                 metallicFactor=0.0,
                 roughnessFactor=0.5,
+            )
+            sphere_mesh = pyrender.Mesh.from_trimesh(sphere, material=material)
+            scene.add(sphere_mesh)
+
+        # Create skeleton-only markers (small gray dots)
+        for i in skeleton_indices:
+            point = markers[i]
+            # Small sphere for skeleton-only markers (0.5cm radius)
+            sphere = trimesh.creation.icosphere(subdivisions=1, radius=0.005)  # 0.5cm radius
+            sphere.vertices += point  # Translate to marker position
+
+            # Create material with gray color
+            material = pyrender.MetallicRoughnessMaterial(
+                baseColorFactor=[0.5, 0.5, 0.5, 1.0],  # Gray
+                metallicFactor=0.0,
+                roughnessFactor=0.7,
             )
             sphere_mesh = pyrender.Mesh.from_trimesh(sphere, material=material)
             scene.add(sphere_mesh)
@@ -630,12 +984,12 @@ def create_scene_with_markers_and_mesh(
                 vec = p2 - p1
                 length = np.linalg.norm(vec)
 
-                if length > 0:
-                    # Create a cylinder with small radius
+                if length > 0.001:  # Minimum length to avoid degenerate cylinders
+                    # Create a cylinder with thin thickness
                     cylinder = trimesh.creation.cylinder(
-                        radius=0.005,  # Thin line
+                        radius=0.01,  # Thin line (1cm)
                         height=length,
-                        sections=8,  # Low poly for performance
+                        sections=6,  # Minimal sections for performance
                     )
 
                     # Rotate cylinder to align with vector
@@ -665,11 +1019,14 @@ def create_scene_with_markers_and_mesh(
                     translation = trimesh.transformations.translation_matrix(midpoint)
                     cylinder.apply_transform(translation)
 
-                    # Create mesh with gray color
+                    # Get color based on anatomical group (use first marker's color)
+                    color = get_skeleton_color(marker_names[idx1] if marker_names is not None else "SACR")
+
+                    # Create mesh with anatomical color
                     material = pyrender.MetallicRoughnessMaterial(
-                        baseColorFactor=[0.5, 0.5, 0.5, 1.0],
+                        baseColorFactor=color,
                         metallicFactor=0.0,
-                        roughnessFactor=1.0,
+                        roughnessFactor=0.5,
                     )
                     line_mesh = pyrender.Mesh.from_trimesh(cylinder, material=material)
                     scene.add(line_mesh)
@@ -697,12 +1054,14 @@ def render_frame_with_camera(
     mesh_vertices,
     mesh_faces,
     renderer,
+    marker_names=None,
     camera_azimuth=0,
     camera_elevation=15,
     cam_distance=3.0,
     show_markers=True,
     show_skeleton=True,
     show_mesh=True,
+    category_info=None,
 ):
     """
     Render a single frame with configurable camera angle.
@@ -713,12 +1072,14 @@ def render_frame_with_camera(
         mesh_vertices: (n_vertices, 3) SMPL mesh vertices
         mesh_faces: (n_faces, 3) SMPL mesh faces
         renderer: pyrender.OffscreenRenderer instance
+        marker_names: List of marker label names (optional, for skeleton coloring)
         camera_azimuth: Camera rotation angle in degrees (0-360, default 0)
         camera_elevation: Camera tilt angle in degrees (-20 to 80, default 15)
         cam_distance: Camera distance from mesh center (default 3.0)
         show_markers: Whether to show marker points
         show_skeleton: Whether to show skeleton lines
         show_mesh: Whether to show SMPL mesh
+        category_info: Dictionary with marker category information (from filter_markers)
 
     Returns:
         RGB numpy array (H, W, 3) uint8
@@ -729,9 +1090,11 @@ def render_frame_with_camera(
         skeleton_connections,
         mesh_vertices,
         mesh_faces,
+        marker_names,
         show_markers,
         show_skeleton,
         show_mesh,
+        category_info,
     )
 
     # Position camera based on azimuth, elevation, and distance
@@ -915,6 +1278,17 @@ def main():
     print("Transforming markers to SMPL space (Y-up)...")
     marker_data_yup = transform_marker_to_smpl_space(marker_data_zup)
 
+    # Filter markers based on usage (fitting vs skeleton-only)
+    print("\nFiltering markers based on usage...")
+    marker_data_yup_filtered, marker_names_filtered, category_info = filter_markers(marker_data_yup, marker_names)
+    print_marker_summary(category_info)
+
+    # Store category info for visualization
+    ui_category_info = {
+        "n_fitting": category_info["n_fitting"],
+        "n_skeleton": category_info["n_skeleton"],
+    }
+
     # Pre-compute SMPL vertices
     try:
         smpl_vertices, smpl_faces = precompute_smpl_vertices(poses, trans, betas, model_type)
@@ -926,22 +1300,31 @@ def main():
         # Create dummy faces (won't be used for wireframe)
         smpl_faces = np.array([[0, 1, 2]])
 
-    # Validate skeleton connections
-    print("\nValidating skeleton connections...")
-    skeleton_connections, missing_markers = validate_skeleton_connections(marker_names, MARKER_SKELETON)
+    # Validate skeleton connections with filtered markers
+    print("\nValidating skeleton connections with filtered markers...")
+    skeleton_connections, missing_markers = validate_skeleton_with_filtering(marker_names_filtered, MARKER_SKELETON)
 
     if missing_markers:
-        print(f"  Warning: Missing markers: {missing_markers}")
+        print(f"  Warning: Missing skeleton markers: {missing_markers}")
     print(f"  Valid connections: {len(skeleton_connections)}")
+
+    # Debug: Print which connections are being used
+    print("  Skeleton connections being used:")
+    for idx, (p1_idx, p2_idx) in enumerate(skeleton_connections[:10]):  # Show first 10
+        p1_name = marker_names_filtered[p1_idx]
+        p2_name = marker_names_filtered[p2_idx]
+        print(f"    {p1_name} ↔ {p2_name}")
+    if len(skeleton_connections) > 10:
+        print(f"    ... and {len(skeleton_connections) - 10} more")
 
     if not skeleton_connections:
         print("Error: No valid skeleton connections found!")
         sys.exit(1)
 
     # Downsample frames if requested
-    marker_data_yup = marker_data_yup[:: args.downsample]
+    marker_data_yup_filtered = marker_data_yup_filtered[:: args.downsample]
     smpl_vertices = smpl_vertices[:: args.downsample]
-    total_frames = len(marker_data_yup)
+    total_frames = len(marker_data_yup_filtered)
 
     print(f"\nTotal frames: {total_frames}")
     if args.downsample > 1:
@@ -970,22 +1353,26 @@ def main():
         "show_skeleton": True,
         "show_mesh": True,
         "renderer": renderer,
+        "marker_names": marker_names_filtered,
+        "category_info": ui_category_info,
     }
 
     # Pre-render first frame
     print("Rendering first frame...")
     initial_frame = render_frame_with_camera(
-        marker_data_yup[0],
+        marker_data_yup_filtered[0],
         skeleton_connections,
         smpl_vertices[0],
         smpl_faces,
         renderer,
+        marker_names_filtered,
         ui_state["camera_azimuth"],
         ui_state["camera_elevation"],
         ui_state["cam_distance"],
         ui_state["show_markers"],
         ui_state["show_skeleton"],
         ui_state["show_mesh"],
+        ui_state["category_info"],
     )
     img_display = ax.imshow(initial_frame)
 
@@ -993,17 +1380,19 @@ def main():
     def update_visuals(frame_idx):
         """Render and display a specific frame."""
         frame_rgb = render_frame_with_camera(
-            marker_data_yup[frame_idx],
+            marker_data_yup_filtered[frame_idx],
             skeleton_connections,
             smpl_vertices[frame_idx],
             smpl_faces,
             renderer,
+            ui_state["marker_names"],
             ui_state["camera_azimuth"],
             ui_state["camera_elevation"],
             ui_state["cam_distance"],
             ui_state["show_markers"],
             ui_state["show_skeleton"],
             ui_state["show_mesh"],
+            ui_state["category_info"],
         )
         img_display.set_data(frame_rgb)
         ax.set_title(
@@ -1080,7 +1469,11 @@ def main():
 
     # Visibility checkboxes
     ax_checkbox = plt.axes((0.2, 0.04, 0.2, 0.05))
-    checkboxes = CheckButtons(ax_checkbox, ["Markers", "Skeleton", "Mesh"], [True, True, True])
+    checkboxes = CheckButtons(
+        ax_checkbox,
+        ["Markers", "Skeleton", "Mesh"],
+        [True, True, True],
+    )
 
     def update_checkbox(label):
         if label == "Markers":
@@ -1186,7 +1579,22 @@ if __name__ == "__main__":
             if missing_markers:
                 print(f"  Missing markers: {missing_markers}")
 
-            print("\nAll tests passed! Data loading and transformation working correctly.")
+            # Test marker filtering
+            print("\nTesting marker filtering...")
+            marker_data_yup = transform_marker_to_smpl_space(marker_data_zup)
+            filtered_data, filtered_names, category_info = filter_markers(marker_data_yup, marker_names)
+            print_marker_summary(category_info)
+
+            # Test skeleton validation with filtered markers
+            print("\nTesting skeleton validation with filtered markers...")
+            skeleton_connections_filtered, missing_markers_filtered = validate_skeleton_with_filtering(
+                filtered_names, MARKER_SKELETON
+            )
+            print(f"  Valid connections with filtered markers: {len(skeleton_connections_filtered)}")
+            if missing_markers_filtered:
+                print(f"  Missing skeleton markers: {missing_markers_filtered}")
+
+            print("\nAll tests passed! Data loading, transformation, and filtering working correctly.")
 
         except Exception as e:
             print(f"Error during test: {e}")
