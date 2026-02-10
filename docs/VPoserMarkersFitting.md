@@ -2,7 +2,7 @@
 
 ## Overview
 
-The `fit_markers.py` script replaces the custom optimization in `2_fit_smpl_markers.py` with the human_body_prior library's IK_Engine, which uses VPoser prior for more robust SMPL parameter estimation. This script performs inverse kinematics (IK) to fit SMPL body model parameters to motion capture marker data from the Van Criekinge dataset.
+The `fit_markers.py` script fits SMPL body model parameters to a single marker NPZ file using the human_body_prior library's IK_Engine and VPoser prior. For large-scale processing, `fit_batch.py` provides parallelized execution across subjects and trials.
 
 ## Installation and Setup
 
@@ -29,7 +29,7 @@ uv pip install "git+https://github.com/facebookresearch/pytorch3d.git" --no-buil
 
 ### 3. Download Required Models
 
-Before running the script, ensure you have:
+Before running the scripts, ensure you have:
 
 1. **VPoser v2.05 model** in `human_body_prior/support_data/dowloads/V02_05/`
    - Contains `.ckpt` files and `V02_05.yaml` configuration
@@ -41,129 +41,89 @@ Before running the script, ensure you have:
 
 ## Usage
 
-### Basic Usage
+### Batch Processing (Recommended)
+
+To process multiple subjects in parallel:
+
+```bash
+cd human_body_prior
+uv run python -m src.fit_batch \
+  --processed_dir ../data/processed_markers_all_2 \
+  --models_dir ../data/smpl \
+  --out_dir ../data/fitted_smpl_all_3 \
+  --workers 8 \
+  --subjects subj1-50
+```
+
+### Single File Processing
+
+To process a specific marker file:
 
 ```bash
 cd human_body_prior
 uv run python -m src.fit_markers \
-  --processed_dir ../data/processed_markers_all_2 \
-  --models_dir ../data/smpl \
-  --out_dir ../data/fitted_smpl_all_3_new
+  --input ../data/processed_markers_all_2/SUBJ01/SUBJ1_0_markers_positions.npz \
+  --output ../data/fitted_smpl_all_3/SUBJ01/SUBJ1_0_smpl_params.npz \
+  --models_dir ../data/smpl
 ```
 
-### Command Line Arguments
+## Command Line Arguments
+
+### `fit_batch.py`
 
 | Argument | Description | Default |
 |----------|-------------|---------|
 | `--processed_dir` | Path to processed markers (output of Step 1) | Required |
+| `--out_dir` | Root output directory for SMPL parameters | Required |
 | `--models_dir` | Path to SMPL models directory | Required |
-| `--out_dir` | Output directory for fitted SMPL parameters | Required |
-| `--subject` | Process specific subject only (e.g., SUBJ01) | All subjects |
-| `--trial` | Process specific trial only (e.g., SUBJ1_0) | All trials |
+| `--subjects` | Subject range (e.g., `subj1-20`) | All subjects |
+| `--workers` | Number of parallel processes | 8 |
+| `--device` | Device to use ('cpu' or 'cuda') | 'cuda' |
+| `--batch_size` | Maximum frames per batch | 128 |
+
+### `fit_markers.py`
+
+| Argument | Description | Default |
+|----------|-------------|---------|
+| `--input` | Path to input marker NPZ | Required |
+| `--output` | Path to output SMPL NPZ | Required |
+| `--models_dir` | Path to SMPL models directory | Required |
 | `--device` | Device to use ('cpu' or 'cuda') | 'cuda' |
 | `--batch_size` | Maximum frames per batch | 128 |
 | `--vicon_up` | Vicon up axis ('X', 'Y', or 'Z') | 'Z' |
 | `--vicon_forward` | Vicon forward axis ('X', 'Y', or 'Z') | 'Y' |
 
-### Examples
-
-```bash
-# Process all subjects and trials
-uv run python -m src.fit_markers \
-  --processed_dir ../data/processed_markers_all_2 \
-  --models_dir ../data/smpl \
-  --out_dir ../data/fitted_smpl_all_3_new \
-  --device cpu
-
-# Process specific subject
-uv run python -m src.fit_markers \
-  --processed_dir ../data/processed_markers_all_2 \
-  --models_dir ../data/smpl \
-  --out_dir ../data/fitted_smpl_all_3_new \
-  --subject SUBJ01
-
-# Process specific trial
-uv run python -m src.fit_markers \
-  --processed_dir ../data/processed_markers_all_2 \
-  --models_dir ../data/smpl \
-  --out_dir ../data/fitted_smpl_all_3_new \
-  --device cuda \
-  --subject SUBJ01 --trial SUBJ1_0
-```
-
 ## What Results Do We Get?
 
-The script produces two types of output files for each trial:
+Each trial produces:
 
 ### 1. SMPL Parameters File (`*_smpl_params.npz`)
 
-Contains all SMPL parameters in the same format as the original pipeline:
+Contains all SMPL parameters:
+- `poses`: (T, 72) - Root orientation + pose body
+- `trans`: (T, 3) - Global translation
+- `betas`: (10,) - Shape parameters
+- `joints`: (T, 24, 3) - SMPL joint positions
+- `gender`, `subject_id`, `trial_name`, `fps`, `n_frames`
 
-```python
-import numpy as np
-data = np.load('SUBJ1_0_smpl_params.npz', allow_pickle=True)
+### 2. Metadata File (`*_smpl_params.json`)
 
-# Keys in the NPZ file:
-# - 'poses': (T, 72) - 3 root_orient + 63 pose_body + 6 hand zeros
-# - 'trans': (T, 3) - global translation
-# - 'betas': (10,) - shape parameters
-# - 'joints': (T, 24, 3) - SMPL joint positions
-# - 'gender': str - model gender
-# - 'subject_id': str - subject ID
-# - 'trial_name': str - trial name
-# - 'fps': float - frame rate
-# - 'n_frames': int - number of frames
-```
-
-### 2. Metadata File (`*_smpl_metadata.json`)
-
-Contains detailed information about the fitting process:
-
-```json
-{
-  "subject_id": "SUBJ01",
-  "trial_name": "SUBJ1_0",
-  "gender": "male",
-  "frames_fitted": 17,
-  "fps": 20.0,
-  "markers_used": ["LASI", "RASI", "LPSI", "RPSI", ...],
-  "vertex_ids": [3021, 6729, 3056, 6779, ...],
-  "settings": {
-    "vicon_up": "Z",
-    "vicon_forward": "Y",
-    "batch_size": 64,
-    "device": "cpu"
-  }
-}
-```
+Contains fitting settings, markers used, and vertex ID mappings.
 
 ## How to Examine Results
 
 ### Using `render_smpl_mesh_live.py`
 
-The best way to visualize the results is using the interactive visualization script:
-
 ```bash
 python render_smpl_mesh_live.py --subject 01 --scene 0 --model male
 ```
 
-**Controls:**
-- **Frame Slider**: Frame scrubbing (auto-pauses)
-- **Beta Slider**: Adjust body shape (-10 to +10, uniform "fatness")
-- **Override Checkbox**: Enable/disable beta slider override
-- **Play/Pause**: Toggle animation playback
-- **Left/Right Arrows**: Rotate camera horizontally (azimuth ±15°)
-- **Up/Down Arrows**: Tilt camera vertically (elevation ±10°)
-- **Scroll Up/Down**: Zoom in/out (distance ±0.5)
-- **Spacebar**: Play/Pause toggle
-
 ### Using `view_smpl_params.py`
-
-For a quick joint-based visualization:
 
 ```bash
 python view_smpl_params.py --subject SUBJ01 --trial SUBJ1_0
 ```
+
 
 ## How the Script Works
 
@@ -215,27 +175,49 @@ graph TD
 - Virtual markers = vertex positions + 0.0095m offset along normals
 - Adapted from `ik_example_mocap.py`
 
-### Marker Mapping Process
+### Marker Set Analysis & Mapping
 
-The script performs a two-step marker mapping:
+This section details the marker configurations used in the Van Criekinge dataset and how they are mapped to the SMPL model.
 
-1. **Canonical Name Conversion** (via `labels_map.py`):
-   ```
-   Raw marker → Canonical name
-   "LASI" → "LASI"
-   "RASI" → "RASI"
-   "LPSI" → "LPSI"
-   "RPSI" → "RPSI"
-   ```
+#### 1. Raw Dataset Markers (Plug-In Gait)
 
-2. **Vertex ID Lookup** (via `marker_vids.py`):
-   ```
-   Canonical name → SMPL vertex ID
-   "LASI" → 3021
-   "RASI" → 6729
-   "LPSI" → 3056
-   "RPSI" → 6779
-   ```
+The raw dataset utilizes a full-body marker set consisting of **111 markers**. This includes the standard 28 Plug-In Gait (PiG) markers plus additional tracking clusters (4 markers per segment) to ensure robustness during dynamic movements.
+
+- **Head:** `LFHD`, `RFHD`, `LBHD`, `RBHD`
+- **Torso:** `C7`, `T10`, `CLAV`, `STRN`
+- **Pelvis:** `LASI`, `RASI`, `SACR`
+- **Upper Limbs:** `LSHO`/`RSHO`, `LELB`/`RELB`, `LWRA`/`LWRB`, `RWRA`/`RWRB`, `LFIN`/`RFIN`
+- **Lower Limbs:** `LTHI`/`RTHI`, `LKNE`/`RKNE`, `LTIB`/`RTIB`, `LANK`/`RANK`, `LHEE`/`RHEE`, `LTOE`/`RTOE`, `LMT5`/`RMT5`
+
+#### 2. Comparison: Previous vs. Current Implementation
+
+The pipeline has evolved from a direct joint-based fitting to a high-fidelity surface-based fitting.
+
+| Feature | Previous (`2_fit_smpl_markers.py`) | Current (`fit_markers.py`) |
+| :--- | :--- | :--- |
+| **Method** | Direct Marker-to-Joint mapping | Marker-to-Vertex (IK_Engine) |
+| **Marker Count** | 29 markers | ~35 markers |
+| **Logic** | Estimated joint centers | Surface mesh vertex optimization |
+| **Advantages** | Simple, fast | Anatomically correct, uses VPoser prior |
+| **Limitations** | "Sliding" markers, inaccurate orientations | Computationally heavier (IK optimization) |
+
+#### 3. Current Mapping Logic
+
+The `fit_markers.py` script uses a two-step mapping to link raw markers to specific SMPL mesh vertex IDs:
+
+1.  **Canonical Name Conversion** (via `labels_map.py`): Converts dataset-specific names to canonical AMASS/Mosh labels (e.g., `LASI` -> `LFWT`, `RASI` -> `RFWT`).
+2.  **Vertex ID Lookup** (via `marker_vids.py`): Maps canonical labels to vertex indices on the SMPL mesh (e.g., `LFWT` -> Vertex `3021`).
+
+#### 4. Markers Utilized in Fitting (~35 Markers)
+
+The current implementation utilizes a strategic subset of markers to capture surface orientation and prevent joint "sliding":
+
+- **Pelvis:** `LASI`/`RASI` mapped to Front Waist (`LFWT`/`RFWT`) vertices.
+- **Wrists:** `LWRA`/`LWRB` mapped to Inner/Outer Wrist (`LIWR`/`LOWR`) vertices, providing better hand rotation.
+- **Feet:** `LHEE`, `LTOE`, and `LMT5` are all mapped to their respective mesh locations, ensuring the foot model aligns with the ground plane.
+- **Fingers:** `LFIN`/`RFIN` are included to constrain the hand pose.
+
+**Surface Fitting Advantage:** By fitting to the mesh surface (with a 0.0095m marker offset), the `IK_Engine` produces much more anatomically correct results and utilizes the VPoser prior to prevent unnatural joint angles.
 
 ## Technical Details
 
