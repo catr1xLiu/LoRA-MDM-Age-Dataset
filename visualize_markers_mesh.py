@@ -226,7 +226,9 @@ def filter_markers(marker_data, marker_names):
         - filtered_names: Corresponding marker names
         - category_info: Dictionary with category information
     """
-    fitting_indices, skeleton_indices, other_indices = get_marker_categories(marker_names)
+    fitting_indices, skeleton_indices, other_indices = get_marker_categories(
+        marker_names
+    )
 
     # Combine fitting and skeleton indices (in that order)
     visible_indices = fitting_indices + skeleton_indices
@@ -297,7 +299,9 @@ def print_marker_summary(category_info):
     print("=" * 60)
 
     if category_info["n_other"] > 0:
-        print(f"\nNote: {category_info['n_other']} markers are hidden (not used for fitting or skeleton)")
+        print(
+            f"\nNote: {category_info['n_other']} markers are hidden (not used for fitting or skeleton)"
+        )
 
     # Print fitting markers found
     if category_info["n_fitting"] > 0:
@@ -391,7 +395,13 @@ def detect_gpus():
         return gpus
 
     # Find all card devices
-    cards = sorted([c for c in dri_path.glob("card*") if c.name.startswith("card") and c.name[4:].isdigit()])
+    cards = sorted(
+        [
+            c
+            for c in dri_path.glob("card*")
+            if c.name.startswith("card") and c.name[4:].isdigit()
+        ]
+    )
 
     for card_idx, card in enumerate(cards):
         gpu_info = {
@@ -430,14 +440,18 @@ def detect_gpus():
                         lspci_output = lspci_result.stdout
 
                         # Parse vendor and model from VGA controller line
-                        vga_match = re.search(r"VGA compatible controller: (.+)", lspci_output)
+                        vga_match = re.search(
+                            r"VGA compatible controller: (.+)", lspci_output
+                        )
                         if vga_match:
                             full_name = vga_match.group(1).strip()
 
                             # Split vendor and model
                             if "NVIDIA" in full_name:
                                 gpu_info["vendor"] = "NVIDIA"
-                                gpu_info["model"] = full_name.replace("NVIDIA Corporation", "").strip()
+                                gpu_info["model"] = full_name.replace(
+                                    "NVIDIA Corporation", ""
+                                ).strip()
                             elif "AMD" in full_name or "ATI" in full_name:
                                 gpu_info["vendor"] = "AMD"
                                 # Clean up AMD naming
@@ -451,7 +465,9 @@ def detect_gpus():
                                 gpu_info["model"] = model.strip()
                             elif "Intel" in full_name:
                                 gpu_info["vendor"] = "Intel"
-                                gpu_info["model"] = full_name.replace("Intel Corporation", "").strip()
+                                gpu_info["model"] = full_name.replace(
+                                    "Intel Corporation", ""
+                                ).strip()
                             else:
                                 gpu_info["model"] = full_name
 
@@ -509,7 +525,9 @@ def select_gpu(gpus):
                 print(f"\nSelected: {selected['vendor']} - {selected['model']}")
                 return gpu_id
             else:
-                print(f"Invalid choice. Please enter a number between 0 and {len(gpus) - 1}")
+                print(
+                    f"Invalid choice. Please enter a number between 0 and {len(gpus) - 1}"
+                )
         except ValueError:
             print("Invalid input. Please enter a number.")
         except KeyboardInterrupt:
@@ -575,7 +593,9 @@ def setup_renderer_live(width=1024, height=1024):
         return renderer
     except Exception as e:
         print(f"Renderer initialization failed: {e}")
-        print("\nEnsure EGL/OpenGL dependencies are installed and GPU drivers are working.")
+        print(
+            "\nEnsure EGL/OpenGL dependencies are installed and GPU drivers are working."
+        )
         print("On headless servers, ensure libEGL is available.")
         sys.exit(1)
 
@@ -622,7 +642,9 @@ def load_processed_markers(subject, scene):
 
     # Format filename: SUBJ1_0_markers_positions.npz
     subj_num = subject.lstrip("0") or "0"
-    markers_path = os.path.join(markers_dir, f"SUBJ{subj_num}_{scene}_markers_positions.npz")
+    markers_path = os.path.join(
+        markers_dir, f"SUBJ{subj_num}_{scene}_markers_positions.npz"
+    )
 
     if not os.path.exists(markers_path):
         raise FileNotFoundError(f"Processed markers not found: {markers_path}")
@@ -633,6 +655,33 @@ def load_processed_markers(subject, scene):
     frame_rate = float(data["frame_rate"])
 
     return marker_data, marker_names, frame_rate
+
+
+def load_metadata(subject, scene):
+    """
+    Load metadata JSON for the subject and scene.
+
+    Args:
+        subject (str): Subject ID string.
+        scene (int): Scene number.
+
+    Returns:
+        dict or None: Metadata dictionary if found, else None.
+    """
+    import json
+
+    subj_id = f"SUBJ{subject}"
+    markers_dir = os.path.join("data", "processed_markers_all_2", subj_id)
+
+    # Format filename: SUBJ1_0_metadata.json
+    subj_num = subject.lstrip("0") or "0"
+    metadata_path = os.path.join(markers_dir, f"SUBJ{subj_num}_{scene}_metadata.json")
+
+    if not os.path.exists(metadata_path):
+        return None
+
+    with open(metadata_path, "r") as f:
+        return json.load(f)
 
 
 def load_smpl_params(subject, scene):
@@ -924,7 +973,9 @@ def create_scene_with_markers_and_mesh(
             alphaMode="BLEND",  # Enable transparency blending
             doubleSided=True,  # Render both sides
         )
-        mesh_node = pyrender.Mesh.from_trimesh(body_mesh, material=mesh_material, smooth=True)
+        mesh_node = pyrender.Mesh.from_trimesh(
+            body_mesh, material=mesh_material, smooth=True
+        )
         scene.add(mesh_node)
 
     # Add markers as points if visible
@@ -933,8 +984,12 @@ def create_scene_with_markers_and_mesh(
         if category_info is not None:
             # We have category information
             n_fitting = category_info.get("n_fitting", 0)
-            fitting_indices = list(range(n_fitting))  # First n_fitting markers are fitting
-            skeleton_indices = list(range(n_fitting, len(markers)))  # Rest are skeleton-only
+            fitting_indices = list(
+                range(n_fitting)
+            )  # First n_fitting markers are fitting
+            skeleton_indices = list(
+                range(n_fitting, len(markers))
+            )  # Rest are skeleton-only
         else:
             # No category info - treat all as fitting markers
             fitting_indices = list(range(len(markers)))
@@ -944,7 +999,9 @@ def create_scene_with_markers_and_mesh(
         for i in fitting_indices:
             point = markers[i]
             # Big sphere for fitting markers (2cm radius)
-            sphere = trimesh.creation.icosphere(subdivisions=1, radius=0.02)  # 2cm radius
+            sphere = trimesh.creation.icosphere(
+                subdivisions=1, radius=0.02
+            )  # 2cm radius
             sphere.vertices += point  # Translate to marker position
 
             # Create material with bright blue color
@@ -960,7 +1017,9 @@ def create_scene_with_markers_and_mesh(
         for i in skeleton_indices:
             point = markers[i]
             # Small sphere for skeleton-only markers (0.5cm radius)
-            sphere = trimesh.creation.icosphere(subdivisions=1, radius=0.005)  # 0.5cm radius
+            sphere = trimesh.creation.icosphere(
+                subdivisions=1, radius=0.005
+            )  # 0.5cm radius
             sphere.vertices += point  # Translate to marker position
 
             # Create material with gray color
@@ -1003,13 +1062,19 @@ def create_scene_with_markers_and_mesh(
                         if np.allclose(z_axis, -target_axis):
                             # 180 degree rotation around any perpendicular axis
                             rot_axis = np.array([1, 0, 0])
-                            rotation = trimesh.transformations.rotation_matrix(np.pi, rot_axis)
+                            rotation = trimesh.transformations.rotation_matrix(
+                                np.pi, rot_axis
+                            )
                         else:
                             # Calculate rotation using cross product
                             rot_axis = np.cross(z_axis, target_axis)
                             rot_axis = rot_axis / np.linalg.norm(rot_axis)
-                            angle = np.arccos(np.clip(np.dot(z_axis, target_axis), -1.0, 1.0))
-                            rotation = trimesh.transformations.rotation_matrix(angle, rot_axis)
+                            angle = np.arccos(
+                                np.clip(np.dot(z_axis, target_axis), -1.0, 1.0)
+                            )
+                            rotation = trimesh.transformations.rotation_matrix(
+                                angle, rot_axis
+                            )
 
                         # Apply rotation
                         cylinder.apply_transform(rotation)
@@ -1020,7 +1085,9 @@ def create_scene_with_markers_and_mesh(
                     cylinder.apply_transform(translation)
 
                     # Get color based on anatomical group (use first marker's color)
-                    color = get_skeleton_color(marker_names[idx1] if marker_names is not None else "SACR")
+                    color = get_skeleton_color(
+                        marker_names[idx1] if marker_names is not None else "SACR"
+                    )
 
                     # Create mesh with anatomical color
                     material = pyrender.MetallicRoughnessMaterial(
@@ -1037,7 +1104,9 @@ def create_scene_with_markers_and_mesh(
 
     # Add directional lights
     light1 = pyrender.DirectionalLight(color=[1.0, 1.0, 1.0], intensity=2.0)
-    scene.add(light1, pose=np.array([[1, 0, 0, 0], [0, 1, 0, 3], [0, 0, 1, 3], [0, 0, 0, 1]]))
+    scene.add(
+        light1, pose=np.array([[1, 0, 0, 0], [0, 1, 0, 3], [0, 0, 1, 3], [0, 0, 0, 1]])
+    )
 
     light2 = pyrender.DirectionalLight(color=[1.0, 1.0, 1.0], intensity=1.5)
     scene.add(
@@ -1173,7 +1242,9 @@ Controls:
         help="Subject ID (e.g., 01, 02, 138)",
     )
 
-    parser.add_argument("-c", "--scene", type=int, required=True, help="Scene number (e.g., 0, 1, 2, 3)")
+    parser.add_argument(
+        "-c", "--scene", type=int, required=True, help="Scene number (e.g., 0, 1, 2, 3)"
+    )
 
     parser.add_argument(
         "-m",
@@ -1184,7 +1255,9 @@ Controls:
         help="SMPL model type (default: neutral)",
     )
 
-    parser.add_argument("--fps", type=int, default=30, help="Target playback frame rate (default: 30)")
+    parser.add_argument(
+        "--fps", type=int, default=30, help="Target playback frame rate (default: 30)"
+    )
 
     parser.add_argument(
         "--resolution",
@@ -1232,7 +1305,18 @@ def main():
     # Load data
     try:
         print("Loading processed markers...")
-        marker_data_zup, marker_names, frame_rate = load_processed_markers(args.subject, args.scene)
+        marker_data_zup, marker_names, frame_rate = load_processed_markers(
+            args.subject, args.scene
+        )
+
+        print("Loading metadata...")
+        metadata = load_metadata(args.subject, args.scene)
+        if metadata:
+            print(
+                f"  Metadata loaded: Age={metadata.get('age')}, Gender={metadata.get('gender')}"
+            )
+        else:
+            print("  No metadata found.")
 
         print("Loading SMPL parameters...")
         poses, trans, betas, joints, gender = load_smpl_params(args.subject, args.scene)
@@ -1265,7 +1349,9 @@ def main():
     n_frames_markers = marker_data_zup.shape[0]
     n_frames_smpl = poses.shape[0]
     if n_frames_markers != n_frames_smpl:
-        print(f"Warning: Frame count mismatch: markers {n_frames_markers}, SMPL {n_frames_smpl}")
+        print(
+            f"Warning: Frame count mismatch: markers {n_frames_markers}, SMPL {n_frames_smpl}"
+        )
         n_frames = min(n_frames_markers, n_frames_smpl)
         marker_data_zup = marker_data_zup[:n_frames]
         poses = poses[:n_frames]
@@ -1280,7 +1366,9 @@ def main():
 
     # Filter markers based on usage (fitting vs skeleton-only)
     print("\nFiltering markers based on usage...")
-    marker_data_yup_filtered, marker_names_filtered, category_info = filter_markers(marker_data_yup, marker_names)
+    marker_data_yup_filtered, marker_names_filtered, category_info = filter_markers(
+        marker_data_yup, marker_names
+    )
     print_marker_summary(category_info)
 
     # Store category info for visualization
@@ -1291,7 +1379,9 @@ def main():
 
     # Pre-compute SMPL vertices
     try:
-        smpl_vertices, smpl_faces = precompute_smpl_vertices(poses, trans, betas, model_type)
+        smpl_vertices, smpl_faces = precompute_smpl_vertices(
+            poses, trans, betas, model_type
+        )
     except Exception as e:
         print(f"Error computing SMPL vertices: {e}")
         print("Falling back to using SMPL joints only...")
@@ -1302,7 +1392,9 @@ def main():
 
     # Validate skeleton connections with filtered markers
     print("\nValidating skeleton connections with filtered markers...")
-    skeleton_connections, missing_markers = validate_skeleton_with_filtering(marker_names_filtered, MARKER_SKELETON)
+    skeleton_connections, missing_markers = validate_skeleton_with_filtering(
+        marker_names_filtered, MARKER_SKELETON
+    )
 
     if missing_markers:
         print(f"  Warning: Missing skeleton markers: {missing_markers}")
@@ -1339,7 +1431,9 @@ def main():
     fig, ax = plt.subplots(figsize=(10, 10))
     plt.subplots_adjust(bottom=0.20)  # More space for controls
     ax.axis("off")
-    ax.set_title("Markers + SMPL Mesh Viewer (Arrow keys: rotate, Scroll: zoom, Space: pause)")
+    ax.set_title(
+        "Markers + SMPL Mesh Viewer (Arrow keys: rotate, Scroll: zoom, Space: pause)"
+    )
 
     # UI State
     ui_state = {
@@ -1355,6 +1449,7 @@ def main():
         "renderer": renderer,
         "marker_names": marker_names_filtered,
         "category_info": ui_category_info,
+        "metadata": metadata,
     }
 
     # Pre-render first frame
@@ -1375,6 +1470,28 @@ def main():
         ui_state["category_info"],
     )
     img_display = ax.imshow(initial_frame)
+
+    # Add metadata text if available
+    if metadata:
+        metadata_text = (
+            f"Gender: {metadata.get('gender', 'N/A')}\n"
+            f"Height: {metadata.get('height_m', metadata.get('height_mm', 0) / 1000):.2f}m\n"
+            f"Leg Length: {metadata.get('leg_length_m', metadata.get('leg_length_mm', 0) / 1000):.2f}m\n"
+            f"Age: {metadata.get('age', 'N/A')}"
+        )
+        ax.text(
+            0.02,
+            0.98,
+            metadata_text,
+            transform=ax.transAxes,
+            verticalalignment="top",
+            color="black",
+            bbox=dict(
+                facecolor="white", alpha=0.5, edgecolor="none", boxstyle="round,pad=0.5"
+            ),
+            fontsize=10,
+            family="monospace",
+        )
 
     # Update visuals function
     def update_visuals(frame_idx):
@@ -1452,7 +1569,9 @@ def main():
 
     # Frame slider widget
     ax_frame_slider = plt.axes((0.2, 0.10, 0.55, 0.03))
-    frame_slider = Slider(ax_frame_slider, "Frame", 0, total_frames - 1, valinit=0, valfmt="%d")
+    frame_slider = Slider(
+        ax_frame_slider, "Frame", 0, total_frames - 1, valinit=0, valfmt="%d"
+    )
 
     def update_frame_slider(val):
         frame = int(frame_slider.val)
@@ -1511,7 +1630,9 @@ def main():
 
     # Create animation
     interval = max(1000 // args.fps, 30)  # Minimum 30ms between frames
-    print(f"\nStarting animation at {1000 // interval:.0f} FPS (interval: {interval}ms)")
+    print(
+        f"\nStarting animation at {1000 // interval:.0f} FPS (interval: {interval}ms)"
+    )
     print("\nControls:")
     print("  Left/Right arrows: Rotate camera horizontally (azimuth ±15°)")
     print("  Up/Down arrows:    Tilt camera vertically (elevation ±10°)")
@@ -1552,10 +1673,14 @@ if __name__ == "__main__":
 
         try:
             print("Loading processed markers...")
-            marker_data_zup, marker_names, frame_rate = load_processed_markers(args.subject, args.scene)
+            marker_data_zup, marker_names, frame_rate = load_processed_markers(
+                args.subject, args.scene
+            )
 
             print("Loading SMPL parameters...")
-            poses, trans, betas, joints, gender = load_smpl_params(args.subject, args.scene)
+            poses, trans, betas, joints, gender = load_smpl_params(
+                args.subject, args.scene
+            )
 
             print(f"Data loaded successfully!")
             print(f"  Marker data shape: {marker_data_zup.shape}")
@@ -1574,7 +1699,9 @@ if __name__ == "__main__":
 
             # Test skeleton validation
             print("\nTesting skeleton validation...")
-            skeleton_connections, missing_markers = validate_skeleton_connections(marker_names, MARKER_SKELETON)
+            skeleton_connections, missing_markers = validate_skeleton_connections(
+                marker_names, MARKER_SKELETON
+            )
             print(f"  Valid connections: {len(skeleton_connections)}")
             if missing_markers:
                 print(f"  Missing markers: {missing_markers}")
@@ -1582,19 +1709,25 @@ if __name__ == "__main__":
             # Test marker filtering
             print("\nTesting marker filtering...")
             marker_data_yup = transform_marker_to_smpl_space(marker_data_zup)
-            filtered_data, filtered_names, category_info = filter_markers(marker_data_yup, marker_names)
+            filtered_data, filtered_names, category_info = filter_markers(
+                marker_data_yup, marker_names
+            )
             print_marker_summary(category_info)
 
             # Test skeleton validation with filtered markers
             print("\nTesting skeleton validation with filtered markers...")
-            skeleton_connections_filtered, missing_markers_filtered = validate_skeleton_with_filtering(
-                filtered_names, MARKER_SKELETON
+            skeleton_connections_filtered, missing_markers_filtered = (
+                validate_skeleton_with_filtering(filtered_names, MARKER_SKELETON)
             )
-            print(f"  Valid connections with filtered markers: {len(skeleton_connections_filtered)}")
+            print(
+                f"  Valid connections with filtered markers: {len(skeleton_connections_filtered)}"
+            )
             if missing_markers_filtered:
                 print(f"  Missing skeleton markers: {missing_markers_filtered}")
 
-            print("\nAll tests passed! Data loading, transformation, and filtering working correctly.")
+            print(
+                "\nAll tests passed! Data loading, transformation, and filtering working correctly."
+            )
 
         except Exception as e:
             print(f"Error during test: {e}")
