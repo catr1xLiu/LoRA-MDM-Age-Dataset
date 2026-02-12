@@ -43,6 +43,10 @@ from matplotlib.widgets import Slider, Button, CheckButtons
 from matplotlib.animation import FuncAnimation
 import matplotlib.gridspec as gridspec
 
+# Default paths
+DEFAULT_MARKERS_DIR = os.path.join("data", "processed_markers_all_2")
+DEFAULT_FITTED_DIR = os.path.join("data", "fitted_smpl_all_3")
+
 # Note: We're using the mapping information from human_body_prior/src/labels_map.py
 # but implementing the filtering logic directly here for clarity
 
@@ -581,7 +585,7 @@ def setup_renderer_live(width=1024, height=1024):
         sys.exit(1)
 
 
-def load_processed_markers(subject, scene):
+def load_processed_markers(subject, scene, markers_dir=DEFAULT_MARKERS_DIR):
     """
     Load processed motion capture marker data from NPZ file.
 
@@ -589,7 +593,7 @@ def load_processed_markers(subject, scene):
     preprocessed marker trajectories ready for SMPL fitting.
 
     File Naming Convention:
-    - Input: data/processed_markers_all_2/SUBJ{ID}/SUBJ{num}_{scene}_markers_positions.npz
+    - Input: {markers_dir}/SUBJ{ID}/SUBJ{num}_{scene}_markers_positions.npz
     - Example: data/processed_markers_all_2/SUBJ01/SUBJ1_0_markers_positions.npz
 
     NPZ File Contents:
@@ -608,6 +612,7 @@ def load_processed_markers(subject, scene):
                        Leading zeros are handled automatically.
         scene (int): Scene/trial number (e.g., 0, 1, 2, 3).
                      Multiple trials per subject with different activities.
+        markers_dir (str): Root directory for processed markers.
 
     Returns:
         tuple: (marker_data, marker_names, frame_rate)
@@ -619,11 +624,11 @@ def load_processed_markers(subject, scene):
         FileNotFoundError: If the marker file doesn't exist at expected path
     """
     subj_id = f"SUBJ{subject}"
-    markers_dir = os.path.join("data", "processed_markers_all_2", subj_id)
+    subj_markers_dir = os.path.join(markers_dir, subj_id)
 
     # Format filename: SUBJ1_0_markers_positions.npz
     subj_num = subject.lstrip("0") or "0"
-    markers_path = os.path.join(markers_dir, f"SUBJ{subj_num}_{scene}_markers_positions.npz")
+    markers_path = os.path.join(subj_markers_dir, f"SUBJ{subj_num}_{scene}_markers_positions.npz")
 
     if not os.path.exists(markers_path):
         raise FileNotFoundError(f"Processed markers not found: {markers_path}")
@@ -636,13 +641,14 @@ def load_processed_markers(subject, scene):
     return marker_data, marker_names, frame_rate
 
 
-def load_metadata(subject, scene):
+def load_metadata(subject, scene, markers_dir=DEFAULT_MARKERS_DIR):
     """
     Load metadata JSON for the subject and scene.
 
     Args:
         subject (str): Subject ID string.
         scene (int): Scene number.
+        markers_dir (str): Root directory for processed markers.
 
     Returns:
         dict or None: Metadata dictionary if found, else None.
@@ -650,11 +656,11 @@ def load_metadata(subject, scene):
     import json
 
     subj_id = f"SUBJ{subject}"
-    markers_dir = os.path.join("data", "processed_markers_all_2", subj_id)
+    subj_markers_dir = os.path.join(markers_dir, subj_id)
 
     # Format filename: SUBJ1_0_metadata.json
     subj_num = subject.lstrip("0") or "0"
-    metadata_path = os.path.join(markers_dir, f"SUBJ{subj_num}_{scene}_metadata.json")
+    metadata_path = os.path.join(subj_markers_dir, f"SUBJ{subj_num}_{scene}_metadata.json")
 
     if not os.path.exists(metadata_path):
         return None
@@ -663,7 +669,7 @@ def load_metadata(subject, scene):
         return json.load(f)
 
 
-def load_smpl_params(subject, scene):
+def load_smpl_params(subject, scene, fitted_dir=DEFAULT_FITTED_DIR):
     """
     Load fitted SMPL (Skinned Multi-Person Linear Model) parameters from NPZ file.
 
@@ -679,9 +685,9 @@ def load_smpl_params(subject, scene):
     - Translation (trans): 3D global position (x, y, z) in meters
 
     File Naming Convention:
-    - Input: data/fitted_smpl_all_3/SUBJ{ID}/SUBJ{num}_{scene}_smpl_params.npz
+    - Input: {fitted_dir}/SUBJ{ID}/SUBJ{num}_{scene}_smpl_params.npz
     - Example: data/fitted_smpl_all_3/SUBJ01/SUBJ1_0_smpl_params.npz
-    - Subject betas: data/fitted_smpl_all_3/SUBJ{ID}/betas.npy
+    - Subject betas: {fitted_dir}/SUBJ{ID}/betas.npy
 
     NPZ File Contents:
     - 'poses': Shape (n_frames, 72), joint rotation parameters in axis-angle format
@@ -697,6 +703,7 @@ def load_smpl_params(subject, scene):
     Args:
         subject (str): Subject ID string (e.g., '01', '02', '138')
         scene (int): Scene/trial number (e.g., 0, 1, 2, 3)
+        fitted_dir (str): Root directory for fitted SMPL parameters.
 
     Returns:
         tuple: (poses, trans, betas, joints, gender)
@@ -710,10 +717,10 @@ def load_smpl_params(subject, scene):
         FileNotFoundError: If SMPL parameter file doesn't exist
     """
     subj_id = f"SUBJ{subject}"
-    smpl_dir = os.path.join("data", "fitted_smpl_all_3_new", subj_id)
+    subj_fitted_dir = os.path.join(fitted_dir, subj_id)
 
     subj_num = subject.lstrip("0") or "0"
-    smpl_path = os.path.join(smpl_dir, f"SUBJ{subj_num}_{scene}_smpl_params.npz")
+    smpl_path = os.path.join(subj_fitted_dir, f"SUBJ{subj_num}_{scene}_smpl_params.npz")
 
     if not os.path.exists(smpl_path):
         raise FileNotFoundError(f"SMPL params not found: {smpl_path}")
@@ -941,8 +948,8 @@ def create_scene_with_markers_and_mesh(
             174,
             199,
             232,
-            153,
-        ]  # Light blue with 60% opacity
+            200,
+        ]  # Light blue with 80% ish opacity
 
         # Create material with transparency
         mesh_material = pyrender.MetallicRoughnessMaterial(
@@ -1241,6 +1248,20 @@ Controls:
         help="Test data loading only (no GUI)",
     )
 
+    parser.add_argument(
+        "--markers-path",
+        type=str,
+        default=DEFAULT_MARKERS_DIR,
+        help=f"Path to processed markers directory (default: {DEFAULT_MARKERS_DIR})",
+    )
+
+    parser.add_argument(
+        "--fitted-smpl-path",
+        type=str,
+        default=DEFAULT_FITTED_DIR,
+        help=f"Path to fitted SMPL parameters directory (default: {DEFAULT_FITTED_DIR})",
+    )
+
     return parser.parse_args()
 
 
@@ -1256,7 +1277,7 @@ def parse_optimizer_log(log_path):
         return history
 
     pattern = re.compile(
-        r"it (\d+) -- \[total loss = ([\d\.e+-]+)\] - data = ([\d\.e+-]+) \| poZ_body = ([\d\.e+-]+) \| betas = ([\d\.e+-]+)"
+        r"it (\d+) -- \[total loss = ([\d\.eE+-]+)\] - data = ([\d\.eE+-]+) \| .*? = ([\d\.eE+-]+) \| .*? = ([\d\.eE+-]+)"
     )
 
     with open(log_path, "r") as f:
@@ -1265,8 +1286,17 @@ def parse_optimizer_log(log_path):
             if match:
                 history["total"].append(float(match.group(2)))
                 history["data"].append(float(match.group(3)))
-                history["poZ_body"].append(float(match.group(4)))
-                history["betas"].append(float(match.group(5)))
+                # Extract named groups to handle varying order of betas/poZ_body
+                if "betas =" in line and "poZ_body =" in line:
+                    betas_match = re.search(r"betas = ([\d\.eE+-]+)", line)
+                    poz_match = re.search(r"poZ_body = ([\d\.eE+-]+)", line)
+                    if betas_match and poz_match:
+                        history["betas"].append(float(betas_match.group(1)))
+                        history["poZ_body"].append(float(poz_match.group(1)))
+                else:
+                    # Fallback to group indices if explicit search fails
+                    history["poZ_body"].append(float(match.group(4)))
+                    history["betas"].append(float(match.group(5)))
     return history
 
 
@@ -1285,30 +1315,29 @@ def main():
 
     # Load data
     try:
-        print("Loading processed markers...")
-        marker_data_zup, marker_names, frame_rate = load_processed_markers(args.subject, args.scene)
+        print(f"Loading processed markers from {args.markers_path}...")
+        marker_data_zup, marker_names, frame_rate = load_processed_markers(args.subject, args.scene, args.markers_path)
 
-        print("Loading metadata...")
-        metadata = load_metadata(args.subject, args.scene)
+        print(f"Loading metadata from {args.markers_path}...")
+        metadata = load_metadata(args.subject, args.scene, args.markers_path)
         if metadata:
             print(f"  Metadata loaded: Age={metadata.get('age')}, Gender={metadata.get('gender')}")
         else:
             print("  No metadata found.")
 
-        print("Loading SMPL parameters...")
-        poses, trans, betas, joints, gender = load_smpl_params(args.subject, args.scene)
+        print(f"Loading SMPL parameters from {args.fitted_smpl_path}...")
+        poses, trans, betas, joints, gender = load_smpl_params(args.subject, args.scene, args.fitted_smpl_path)
 
         # Load optimizer log
         subj_id = f"SUBJ{args.subject}"
         subj_num = args.subject.lstrip("0") or "0"
         log_path = os.path.join(
-            "data",
-            "fitted_smpl_all_3_new",
+            args.fitted_smpl_path,
             subj_id,
             f"SUBJ{subj_num}_{args.scene}_optimizer.log",
         )
         loss_history = parse_optimizer_log(log_path)
-        print(f"  Loaded {len(loss_history['total'])} optimizer iterations")
+        print(f"  Loaded {len(loss_history['total'])} optimizer iterations from {log_path}")
 
         # Auto-select model type if detected
         model_type = args.model
@@ -1318,14 +1347,6 @@ def main():
 
     except FileNotFoundError as e:
         print(f"\nError: {e}")
-        data_path = Path("data", "fitted_smpl_all_3_new")
-        print(f"\nAvailable subjects in {data_path}:")
-        if data_path.exists():
-            subjects = sorted([d.name for d in data_path.iterdir() if d.is_dir()])
-            for s in subjects[:15]:
-                print(f"  {s}")
-            if len(subjects) > 15:
-                print(f"  ... and {len(subjects) - 15} more")
         sys.exit(1)
 
     print(f"\nData loaded:")
@@ -1441,12 +1462,37 @@ def main():
         ax_loss.plot(iters, loss_history["poZ_body"], label="Pose Prior", alpha=0.7)
         ax_loss.plot(iters, loss_history["betas"], label="Beta Prior", alpha=0.7)
         ax_loss.set_yscale("log")
-        ax_loss.set_ylim(1e-4, 1e4)
+        ax_loss.set_ylim(1e-2, 1e4)
         ax_loss.set_title("Optimizer Loss")
         ax_loss.set_xlabel("Iteration")
         ax_loss.set_ylabel("Loss (log scale)")
         ax_loss.legend(fontsize=8)
         ax_loss.grid(True, which="both", linestyle="--", alpha=0.5)
+
+        # Display final loss values
+        final_total = loss_history["total"][-1]
+        final_data = loss_history["data"][-1]
+        final_pose = loss_history["poZ_body"][-1]
+        final_beta = loss_history["betas"][-1]
+
+        loss_text = (
+            f"Final Losses:\n"
+            f"Total: {final_total:.2e}\n"
+            f"Data:  {final_data:.2e}\n"
+            f"Pose:  {final_pose:.2e}\n"
+            f"Beta:  {final_beta:.2e}"
+        )
+        ax_loss.text(
+            0.95,
+            0.95,
+            loss_text,
+            transform=ax_loss.transAxes,
+            verticalalignment="top",
+            horizontalalignment="right",
+            fontsize=9,
+            family="monospace",
+            bbox=dict(facecolor="white", alpha=0.7, edgecolor="gray", boxstyle="round,pad=0.3"),
+        )
     else:
         ax_loss.text(0.5, 0.5, "No loss history found", ha="center", va="center")
         ax_loss.set_title("Optimizer Loss")
@@ -1703,11 +1749,13 @@ if __name__ == "__main__":
         print("Testing data loading only...")
 
         try:
-            print("Loading processed markers...")
-            marker_data_zup, marker_names, frame_rate = load_processed_markers(args.subject, args.scene)
+            print(f"Loading processed markers from {args.markers_path}...")
+            marker_data_zup, marker_names, frame_rate = load_processed_markers(
+                args.subject, args.scene, args.markers_path
+            )
 
-            print("Loading SMPL parameters...")
-            poses, trans, betas, joints, gender = load_smpl_params(args.subject, args.scene)
+            print(f"Loading SMPL parameters from {args.fitted_smpl_path}...")
+            poses, trans, betas, joints, gender = load_smpl_params(args.subject, args.scene, args.fitted_smpl_path)
 
             print(f"Data loaded successfully!")
             print(f"  Marker data shape: {marker_data_zup.shape}")
