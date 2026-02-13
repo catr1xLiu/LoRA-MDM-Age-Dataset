@@ -21,14 +21,14 @@ import sys
 import argparse
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
-from matplotlib.widgets import Slider, Button
+from matplotlib.widgets import Slider, Button, CheckButtons
 import numpy as np
 from ezc3d import c3d
 
 
 # Predefined skeleton structures for different datasets
 SKELETON_DEFINITIONS = {
-    'van_criekinge': [
+    "van_criekinge": [
         ("CentreOfMass", "TRXO"),
         ("TRXO", "HEDO"),  # Spine
         ("TRXO", "LCLO"),
@@ -49,6 +49,175 @@ SKELETON_DEFINITIONS = {
         ("RTIO", "RFOO"),  # Right Leg
     ],
 }
+
+# Colors for different body parts
+BODY_PART_COLORS = {
+    "head": "red",
+    "torso": "orange",
+    "pelvis": "yellow",
+    "left_arm": "blue",
+    "right_arm": "cyan",
+    "left_leg": "green",
+    "right_leg": "lime",
+    "other": "black",
+}
+
+# Whitelist of physical markers to display as points
+MARKER_WHITELIST = {
+    "LFHD",
+    "RFHD",
+    "LBHD",
+    "RBHD",
+    "C7",
+    "T10",
+    "CLAV",
+    "STRN",
+    "LSHO",
+    "LELB",
+    "LWRA",
+    "LWRB",
+    "LFIN",
+    "RSHO",
+    "RELB",
+    "RWRA",
+    "RWRB",
+    "RFIN",
+    "LASI",
+    "RASI",
+    "SACR",
+    "LPSI",
+    "RPSI",
+    "LTHI",
+    "LKNE",
+    "LTIB",
+    "LANK",
+    "LHEE",
+    "LTOE",
+    "RTHI",
+    "RKNE",
+    "RTIB",
+    "RANK",
+    "RHEE",
+    "RTOE",
+}
+
+
+def get_body_part_color(label):
+    """Categorize marker and return corresponding color."""
+    u = label.upper().split(":")[-1]
+    if u in ["LFHD", "RFHD", "LBHD", "RBHD", "HEDO", "HEDA", "HEDL", "HEDP"]:
+        return BODY_PART_COLORS["head"]
+    elif u in ["C7", "T10", "CLAV", "STRN", "TRXO", "TRXA", "TRXL", "TRXP"]:
+        return BODY_PART_COLORS["torso"]
+    elif u in ["LASI", "RASI", "SACR", "LPSI", "RPSI", "PELO", "PELA", "PELL", "PELP"]:
+        return BODY_PART_COLORS["pelvis"]
+    elif u in ["LSHO", "LELB", "LWRA", "LWRB", "LFIN"] or (
+        u.startswith("L")
+        and any(
+            x in u
+            for x in [
+                "HUO",
+                "HUA",
+                "HUL",
+                "HUP",
+                "RAO",
+                "RAA",
+                "RAL",
+                "RAP",
+                "HNO",
+                "HNA",
+                "HNL",
+                "HNP",
+            ]
+        )
+    ):
+        return BODY_PART_COLORS["left_arm"]
+    elif u in ["RSHO", "RELB", "RWRA", "RWRB", "RFIN"] or (
+        u.startswith("R")
+        and any(
+            x in u
+            for x in [
+                "HUO",
+                "HUA",
+                "HUL",
+                "HUP",
+                "RAO",
+                "RAA",
+                "RAL",
+                "RAP",
+                "HNO",
+                "HNA",
+                "HNL",
+                "HNP",
+            ]
+        )
+    ):
+        return BODY_PART_COLORS["right_arm"]
+    elif u in ["LTHI", "LKNE", "LTIB", "LANK", "LHEE", "LTOE", "LMT5"] or (
+        u.startswith("L")
+        and any(
+            x in u
+            for x in [
+                "FEO",
+                "FEA",
+                "FEL",
+                "FEP",
+                "TIO",
+                "TIA",
+                "TIL",
+                "TIP",
+                "FOO",
+                "FOA",
+                "LFOL",
+                "LFOP",
+                "TOO",
+                "TOA",
+                "TOL",
+                "TOP",
+                "CLO",
+                "CLA",
+                "CLL",
+                "CLP",
+            ]
+        )
+    ):
+        return BODY_PART_COLORS["left_leg"]
+    elif u in ["RTHI", "RKNE", "RTIB", "RANK", "RHEE", "RTOE", "RMT5"] or (
+        u.startswith("R")
+        and any(
+            x in u
+            for x in [
+                "FEO",
+                "FEA",
+                "FEL",
+                "FEP",
+                "TIO",
+                "TIA",
+                "TIL",
+                "TIP",
+                "FOO",
+                "FOA",
+                "RFOL",
+                "RFOP",
+                "TOO",
+                "TOA",
+                "TOL",
+                "TOP",
+                "CLO",
+                "CLA",
+                "CLL",
+                "CLP",
+            ]
+        )
+    ):
+        return BODY_PART_COLORS["right_leg"]
+    return BODY_PART_COLORS["other"]
+
+
+def is_virtual_marker(label):
+    """Check if a marker is virtual (origins, angles, etc.)."""
+    u = label.upper().split(":")[-1]
+    return u not in MARKER_WHITELIST
 
 
 def load_c3d_file(file_path):
@@ -104,7 +273,7 @@ def validate_skeleton(c3d_data, skeleton):
     Returns:
         list: Validated skeleton with only available connections
     """
-    all_labels = c3d_data['parameters']['POINT']["LABELS"]["value"]
+    all_labels = c3d_data["parameters"]["POINT"]["LABELS"]["value"]
     validated_skeleton = []
     missing_markers = set()
 
@@ -140,18 +309,19 @@ def create_visualization(c3d_data, skeleton, show_labels=True, fps=30):
     Returns:
         tuple: (figure, animation) for display
     """
-    all_points = c3d_data['data']['points']
-    all_labels = c3d_data['parameters']['POINT']["LABELS"]["value"]
+    all_points = c3d_data["data"]["points"]
+    all_labels = c3d_data["parameters"]["POINT"]["LABELS"]["value"]
     num_frames = all_points.shape[2]
 
     # Create figure and 3D axis with space for sliders
     fig = plt.figure(figsize=(12, 10))
     plt.subplots_adjust(bottom=0.15)  # Space for sliders
-    ax = fig.add_subplot(111, projection='3d')
-    ax.set_xlabel('X (mm)')
-    ax.set_ylabel('Y (mm)')
-    ax.set_zlabel('Z (mm)')
-    ax.set_title('Motion Capture Data Visualization')
+    ax = fig.add_subplot(111, projection="3d")
+    ax.set_box_aspect((1, 1, 1))  # Force 1:1:1 aspect ratio
+    ax.set_xlabel("X (mm)")
+    ax.set_ylabel("Y (mm)")
+    ax.set_zlabel("Z (mm)")
+    ax.set_title("Motion Capture Data Visualization")
 
     # Extract line data for valid skeleton connections
     lines_data = []
@@ -161,21 +331,35 @@ def create_visualization(c3d_data, skeleton, show_labels=True, fps=30):
         if p1_data is not None and p2_data is not None:
             lines_data.append((p1_data, p2_data))
 
-    # Create line objects for skeleton
-    lines = [ax.plot([], [], [], marker='o', color='blue', linewidth=2)[0] for _ in lines_data]
+    # Create line objects for skeleton (gray and semi-transparent)
+    lines = [
+        ax.plot([], [], [], color="gray", linewidth=1, alpha=0.5)[0] for _ in lines_data
+    ]
+
+    # Display ALL physical markers (excluding virtual ones)
+    physical_markers_data = []
+    physical_markers_plots = []
+    for label in all_labels:
+        if not is_virtual_marker(label):
+            data = get_point_data(all_points, all_labels, label)
+            if data is not None:
+                color = get_body_part_color(label)
+                plot_obj = ax.plot(
+                    [], [], [], marker="o", markersize=4, color=color, linestyle="None"
+                )[0]
+                physical_markers_data.append(data)
+                physical_markers_plots.append(plot_obj)
 
     # Create text labels for markers (if enabled)
     text_objects = {}
     if show_labels:
-        unique_labels = set()
-        for p1, p2 in skeleton:
-            unique_labels.add(p1)
-            unique_labels.add(p2)
-
-        for label in unique_labels:
-            label_data = get_point_data(all_points, all_labels, label)
-            if label_data is not None:
-                text_objects[label] = ax.text(0, 0, 0, label, color='black', fontsize=8)
+        for label in all_labels:
+            if not is_virtual_marker(label):
+                label_data = get_point_data(all_points, all_labels, label)
+                if label_data is not None:
+                    text_objects[label] = ax.text(
+                        0, 0, 0, label, color="black", fontsize=7
+                    )
 
     # Calculate view bounds from data
     max_extent = _calculate_max_extent(all_points)
@@ -186,26 +370,26 @@ def create_visualization(c3d_data, skeleton, show_labels=True, fps=30):
 
     def on_scroll(event):
         """Handle mouse scroll for zoom control."""
-        if event.button == 'up':
+        if event.button == "up":
             zoom_factor[0] /= 1.1
-        elif event.button == 'down':
+        elif event.button == "down":
             zoom_factor[0] *= 1.1
 
-    fig.canvas.mpl_connect('scroll_event', on_scroll)
+    fig.canvas.mpl_connect("scroll_event", on_scroll)
 
     # UI state for playback control
     ui_state = {
-        'frame': 0,
-        'paused': False,
-        'anim': None,
+        "frame": 0,
+        "paused": False,
+        "anim": None,
     }
 
     # Animation update function
     def update(frame):
         """Update visualization for current frame."""
         # If paused and frame hasn't changed, don't update
-        if ui_state['paused'] and frame == ui_state['frame']:
-            return lines + list(text_objects.values())
+        if ui_state["paused"] and frame == ui_state["frame"]:
+            return lines + list(text_objects.values()) + physical_markers_plots
 
         current_points = []
 
@@ -218,14 +402,33 @@ def create_visualization(c3d_data, skeleton, show_labels=True, fps=30):
             line.set_3d_properties(zs)
 
             # Collect points for center calculation
-            current_points.append([p1_data[0, frame], p1_data[1, frame], p1_data[2, frame]])
-            current_points.append([p2_data[0, frame], p2_data[1, frame], p2_data[2, frame]])
+            current_points.append(
+                [p1_data[0, frame], p1_data[1, frame], p1_data[2, frame]]
+            )
+            current_points.append(
+                [p2_data[0, frame], p2_data[1, frame], p2_data[2, frame]]
+            )
+
+        # Update physical markers
+        for plot_obj, data in zip(physical_markers_plots, physical_markers_data):
+            x, y, z = data[0, frame], data[1, frame], data[2, frame]
+            if not np.isnan(x):
+                plot_obj.set_data([x], [y])
+                plot_obj.set_3d_properties([z])
+                plot_obj.set_visible(True)
+                current_points.append([x, y, z])
+            else:
+                plot_obj.set_visible(False)
 
         # Update marker labels
         for label, text_obj in text_objects.items():
             label_data = get_point_data(all_points, all_labels, label)
             if label_data is not None:
-                x, y, z = label_data[0, frame], label_data[1, frame], label_data[2, frame]
+                x, y, z = (
+                    label_data[0, frame],
+                    label_data[1, frame],
+                    label_data[2, frame],
+                )
                 if not np.isnan(x):
                     text_obj.set_position((x, y))
                     text_obj.set_3d_properties(z)
@@ -244,20 +447,20 @@ def create_visualization(c3d_data, skeleton, show_labels=True, fps=30):
                 current_box_size = box_size * zoom_factor[0]
                 ax.set_xlim(center[0] - current_box_size, center[0] + current_box_size)
                 ax.set_ylim(center[1] - current_box_size, center[1] + current_box_size)
-                ax.set_zlim(center[2] - current_box_size, center[2] + current_box_size)
+                ax.set_zlim(0, center[2] + current_box_size)
 
         # Update title with current frame info
-        ax.set_title(f'Frame {frame} / {num_frames - 1}')
+        ax.set_title(f"Frame {frame} / {num_frames - 1}")
 
-        return lines + list(text_objects.values())
+        return lines + list(text_objects.values()) + physical_markers_plots
 
     # Animation frame callback
     def on_frame(frame):
         """Callback for animation frame updates."""
-        if ui_state['paused']:
-            return lines + list(text_objects.values())
+        if ui_state["paused"]:
+            return lines + list(text_objects.values()) + physical_markers_plots
 
-        ui_state['frame'] = frame
+        ui_state["frame"] = frame
         frame_slider.eventson = False
         frame_slider.set_val(frame)
         frame_slider.eventson = True
@@ -265,17 +468,19 @@ def create_visualization(c3d_data, skeleton, show_labels=True, fps=30):
         return update(frame)
 
     # Frame slider widget
-    ax_frame_slider = plt.axes([0.2, 0.08, 0.55, 0.03])
-    frame_slider = Slider(ax_frame_slider, 'Frame', 0, num_frames - 1, valinit=0, valfmt='%d')
+    ax_frame_slider = plt.axes((0.2, 0.08, 0.55, 0.03))
+    frame_slider = Slider(
+        ax_frame_slider, "Frame", 0, num_frames - 1, valinit=0, valfmt="%d"
+    )
 
     def update_frame_slider(val):
         """Handle frame slider changes."""
         frame = int(frame_slider.val)
-        ui_state['frame'] = frame
-        ui_state['paused'] = True
+        ui_state["frame"] = frame
+        ui_state["paused"] = True
         button.label.set_text("Play")
-        if ui_state['anim']:
-            ui_state['anim'].event_source.stop()
+        if ui_state["anim"]:
+            ui_state["anim"].event_source.stop()
 
         # Update all visual elements directly
         current_points = []
@@ -289,14 +494,33 @@ def create_visualization(c3d_data, skeleton, show_labels=True, fps=30):
             line.set_3d_properties(zs)
 
             # Collect points for center calculation
-            current_points.append([p1_data[0, frame], p1_data[1, frame], p1_data[2, frame]])
-            current_points.append([p2_data[0, frame], p2_data[1, frame], p2_data[2, frame]])
+            current_points.append(
+                [p1_data[0, frame], p1_data[1, frame], p1_data[2, frame]]
+            )
+            current_points.append(
+                [p2_data[0, frame], p2_data[1, frame], p2_data[2, frame]]
+            )
+
+        # Update physical markers
+        for plot_obj, data in zip(physical_markers_plots, physical_markers_data):
+            x, y, z = data[0, frame], data[1, frame], data[2, frame]
+            if not np.isnan(x):
+                plot_obj.set_data([x], [y])
+                plot_obj.set_3d_properties([z])
+                plot_obj.set_visible(True)
+                current_points.append([x, y, z])
+            else:
+                plot_obj.set_visible(False)
 
         # Update marker labels
         for label, text_obj in text_objects.items():
             label_data = get_point_data(all_points, all_labels, label)
             if label_data is not None:
-                x, y, z = label_data[0, frame], label_data[1, frame], label_data[2, frame]
+                x, y, z = (
+                    label_data[0, frame],
+                    label_data[1, frame],
+                    label_data[2, frame],
+                )
                 if not np.isnan(x):
                     text_obj.set_position((x, y))
                     text_obj.set_3d_properties(z)
@@ -315,41 +539,53 @@ def create_visualization(c3d_data, skeleton, show_labels=True, fps=30):
                 current_box_size = box_size * zoom_factor[0]
                 ax.set_xlim(center[0] - current_box_size, center[0] + current_box_size)
                 ax.set_ylim(center[1] - current_box_size, center[1] + current_box_size)
-                ax.set_zlim(center[2] - current_box_size, center[2] + current_box_size)
+                ax.set_zlim(0, center[2] + current_box_size)
 
         # Update title with current frame info
-        ax.set_title(f'Frame {frame} / {num_frames - 1}')
+        ax.set_title(f"Frame {frame} / {num_frames - 1}")
 
         fig.canvas.draw_idle()
 
     frame_slider.on_changed(update_frame_slider)
 
     # Play/Pause button
-    ax_button = plt.axes([0.8, 0.08, 0.1, 0.04])
-    button = Button(ax_button, 'Pause')
+    ax_button = plt.axes((0.8, 0.08, 0.1, 0.04))
+    button = Button(ax_button, "Pause")
 
     def toggle_pause(event):
         """Toggle animation playback."""
-        ui_state['paused'] = not ui_state['paused']
-        if ui_state['paused']:
+        ui_state["paused"] = not ui_state["paused"]
+        if ui_state["paused"]:
             button.label.set_text("Play")
-            if ui_state['anim']:
-                ui_state['anim'].event_source.stop()
+            if ui_state["anim"]:
+                ui_state["anim"].event_source.stop()
         else:
             button.label.set_text("Pause")
-            if ui_state['anim']:
-                ui_state['anim'].event_source.start()
+            if ui_state["anim"]:
+                ui_state["anim"].event_source.start()
 
     button.on_clicked(toggle_pause)
+
+    # Label toggle checkbox
+    ax_check = plt.axes((0.05, 0.08, 0.12, 0.04))
+    check = CheckButtons(ax_check, ["Labels"], [show_labels])
+
+    def toggle_labels(label):
+        """Toggle marker labels visibility."""
+        for text_obj in text_objects.values():
+            text_obj.set_visible(not text_obj.get_visible())
+        fig.canvas.draw_idle()
+
+    check.on_clicked(toggle_labels)
 
     # Create animation
     interval_ms = int(1000 / fps)  # Convert FPS to milliseconds
     ani = animation.FuncAnimation(
         fig, on_frame, frames=num_frames, interval=interval_ms, blit=False
     )
-    ui_state['anim'] = ani
+    ui_state["anim"] = ani
 
-    return fig, ani
+    return fig, ani, check
 
 
 def _calculate_max_extent(all_points):
@@ -386,7 +622,7 @@ def _calculate_max_extent(all_points):
 def parse_arguments():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
-        description='Visualize motion capture data from C3D files',
+        description="Visualize motion capture data from C3D files",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -402,37 +638,37 @@ Examples:
     )
 
     parser.add_argument(
-        '-f', '--file',
+        "-f",
+        "--file",
         type=str,
         required=True,
-        help='Path to the C3D motion capture file'
+        help="Path to the C3D motion capture file",
     )
 
     parser.add_argument(
-        '-s', '--skeleton',
+        "-s",
+        "--skeleton",
         type=str,
-        default='van_criekinge',
+        default="van_criekinge",
         choices=list(SKELETON_DEFINITIONS.keys()),
-        help='Skeleton structure to use (default: van_criekinge)'
+        help="Skeleton structure to use (default: van_criekinge)",
     )
 
     parser.add_argument(
-        '--no-labels',
-        action='store_true',
-        help='Do not display marker labels'
+        "--no-labels", action="store_true", help="Do not display marker labels"
     )
 
     parser.add_argument(
-        '--fps',
+        "--fps",
         type=int,
         default=30,
-        help='Animation playback speed in frames per second (default: 30)'
+        help="Animation playback speed in frames per second (default: 30)",
     )
 
     parser.add_argument(
-        '--list-markers',
-        action='store_true',
-        help='Print all available markers in the file and exit'
+        "--list-markers",
+        action="store_true",
+        help="Print all available markers in the file and exit",
     )
 
     return parser.parse_args()
@@ -451,8 +687,8 @@ def main():
         sys.exit(1)
 
     # Get available markers
-    all_labels = c3d_data['parameters']['POINT']["LABELS"]["value"]
-    all_points = c3d_data['data']['points']
+    all_labels = c3d_data["parameters"]["POINT"]["LABELS"]["value"]
+    all_points = c3d_data["data"]["points"]
 
     print(f"  Found {len(all_labels)} markers")
     print(f"  Total frames: {all_points.shape[2]}")
@@ -482,15 +718,12 @@ def main():
     print("\nCreating visualization...")
     print("  Controls: Scroll wheel to zoom, close window to exit")
 
-    fig, ani = create_visualization(
-        c3d_data,
-        skeleton,
-        show_labels=not args.no_labels,
-        fps=args.fps
+    fig, ani, check = create_visualization(
+        c3d_data, skeleton, show_labels=not args.no_labels, fps=args.fps
     )
 
     plt.show()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
