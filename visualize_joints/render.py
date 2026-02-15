@@ -39,7 +39,9 @@ class PLYSequenceViewer:
             raise ValueError(f"No PLY files found in {ply_dir}")
 
         if len(self.pkl_files) != len(self.ply_files):
-            print(f"Warning: {len(self.ply_files)} PLY files but {len(self.pkl_files)} PKL files")
+            print(
+                f"Warning: {len(self.ply_files)} PLY files but {len(self.pkl_files)} PKL files"
+            )
 
         print(f"Found {len(self.ply_files)} frames")
 
@@ -50,6 +52,8 @@ class PLYSequenceViewer:
         self.speed_multiplier = 1.0
         self.show_trail = True
         self.follow_camera = False
+        self.show_floor = True
+        self.show_coord_frame = True
 
         # Pre-load all meshes and translations
         print("Loading meshes and positions...")
@@ -60,7 +64,7 @@ class PLYSequenceViewer:
             # Load mesh
             mesh = o3d.io.read_triangle_mesh(str(ply_file))
             mesh.compute_vertex_normals()
-            mesh.paint_uniform_color([0.68, 0.78, 0.91])  # Light blue
+            mesh.paint_uniform_color([77/255, 171/255, 247/255])  # Darker yellow/tan
 
             # Load PKL to get root position
             try:
@@ -74,7 +78,9 @@ class PLYSequenceViewer:
                 elif "transl" in pkl_data:
                     translation = pkl_data["transl"].squeeze()
                 else:
-                    print(f"Warning: No translation found in {pkl_file.name}, using zero")
+                    print(
+                        f"Warning: No translation found in {pkl_file.name}, using zero"
+                    )
                     translation = np.array([0.0, 0.0, 0.0])
 
                 # Ensure it's a 1D array of length 3
@@ -102,7 +108,10 @@ class PLYSequenceViewer:
 
         # Create visualization elements
         self.floor = self._create_floor()
-        self.coord_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.5, origin=[0, 0, 0])
+        self.grid = self._create_grid()
+        self.coord_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(
+            size=0.5, origin=[0, 0, 0]
+        )
         self.trail_line = self._create_trail()
 
         # Print controls
@@ -134,9 +143,15 @@ class PLYSequenceViewer:
         min_pos = self.translations.min(axis=0)
         max_pos = self.translations.max(axis=0)
         print(f"  Bounding box:")
-        print(f"    X: [{min_pos[0]:.3f}, {max_pos[0]:.3f}] (range: {max_pos[0]-min_pos[0]:.3f} m)")
-        print(f"    Y: [{min_pos[1]:.3f}, {max_pos[1]:.3f}] (range: {max_pos[1]-min_pos[1]:.3f} m)")
-        print(f"    Z: [{min_pos[2]:.3f}, {max_pos[2]:.3f}] (range: {max_pos[2]-min_pos[2]:.3f} m)")
+        print(
+            f"    X: [{min_pos[0]:.3f}, {max_pos[0]:.3f}] (range: {max_pos[0] - min_pos[0]:.3f} m)"
+        )
+        print(
+            f"    Y: [{min_pos[1]:.3f}, {max_pos[1]:.3f}] (range: {max_pos[1] - min_pos[1]:.3f} m)"
+        )
+        print(
+            f"    Z: [{min_pos[2]:.3f}, {max_pos[2]:.3f}] (range: {max_pos[2] - min_pos[2]:.3f} m)"
+        )
         print("=" * 60 + "\n")
 
     def _create_floor(self):
@@ -235,6 +250,8 @@ class PLYSequenceViewer:
         print("  R         - Reset to frame 0")
         print("  L         - Toggle loop")
         print("  T         - Toggle trail (walking path)")
+        print("  G         - Toggle floor and grid")
+        print("  O         - Toggle origin coordinate frame")
         print("  C         - Center camera on current position")
         print("  F         - Toggle camera follow mode")
         print("  +         - Speed up")
@@ -248,12 +265,26 @@ class PLYSequenceViewer:
 
         # Create visualizer
         vis = o3d.visualization.VisualizerWithKeyCallback()
-        vis.create_window(window_name="PLY Sequence Viewer - Walking Motion", width=1280, height=720)
+        vis.create_window(
+            window_name="PLY Sequence Viewer - Walking Motion", width=1280, height=720
+        )
+
+        # Set material properties for all meshes to be less shiny
+        render_option = vis.get_render_option()
+        render_option.mesh_show_back_face = True
+        # Open3D's basic visualizer doesn't have complex material control like Filament,
+        # but we can adjust the light intensity and background to reduce perceived glare.
+        # Note: light_intensity might not be available in all versions of Open3D.
+        # If the above line fails, we rely on the darker background and dark grey mesh.
+        render_option.background_color = np.asarray(
+            [0.8, 0.8, 0.8]
+        )  # Light grey background
 
         # Add geometries
         vis.add_geometry(self.meshes[0])
+
         vis.add_geometry(self.floor)
-        vis.add_geometry(self._create_grid())
+        vis.add_geometry(self.grid)
         vis.add_geometry(self.coord_frame)
 
         if self.trail_line:
@@ -267,21 +298,23 @@ class PLYSequenceViewer:
         def toggle_play(vis):
             self.is_playing = not self.is_playing
             status = "Playing" if self.is_playing else "Paused"
-            print(f"[{status}] Frame {self.current_frame}/{len(self.meshes)-1} | Speed: {self.speed_multiplier:.2f}x")
+            print(
+                f"[{status}] Frame {self.current_frame}/{len(self.meshes) - 1} | Speed: {self.speed_multiplier:.2f}x"
+            )
             return False
 
         def next_frame(vis):
             self.next_frame(vis)
             if self.follow_camera:
                 self._update_camera_follow(vis)
-            print(f"Frame {self.current_frame}/{len(self.meshes)-1}")
+            print(f"Frame {self.current_frame}/{len(self.meshes) - 1}")
             return False
 
         def prev_frame(vis):
             self.prev_frame(vis)
             if self.follow_camera:
                 self._update_camera_follow(vis)
-            print(f"Frame {self.current_frame}/{len(self.meshes)-1}")
+            print(f"Frame {self.current_frame}/{len(self.meshes) - 1}")
             return False
 
         def reset_frame(vis):
@@ -308,11 +341,35 @@ class PLYSequenceViewer:
                 vis.remove_geometry(self.trail_line, reset_bounding_box=False)
             return False
 
+        def toggle_floor(vis):
+            self.show_floor = not self.show_floor
+            status = "ON" if self.show_floor else "OFF"
+            print(f"Floor/Grid: {status}")
+            if self.show_floor:
+                vis.add_geometry(self.floor, reset_bounding_box=False)
+                vis.add_geometry(self.grid, reset_bounding_box=False)
+            else:
+                vis.remove_geometry(self.floor, reset_bounding_box=False)
+                vis.remove_geometry(self.grid, reset_bounding_box=False)
+            return False
+
+        def toggle_coord_frame(vis):
+            self.show_coord_frame = not self.show_coord_frame
+            status = "ON" if self.show_coord_frame else "OFF"
+            print(f"Origin Frame: {status}")
+            if self.show_coord_frame:
+                vis.add_geometry(self.coord_frame, reset_bounding_box=False)
+            else:
+                vis.remove_geometry(self.coord_frame, reset_bounding_box=False)
+            return False
+
         def center_camera(vis):
             current_pos = self.translations[self.current_frame]
             ctr = vis.get_view_control()
             ctr.set_lookat(current_pos)
-            print(f"Camera centered on position: [{current_pos[0]:.2f}, {current_pos[1]:.2f}, {current_pos[2]:.2f}]")
+            print(
+                f"Camera centered on position: [{current_pos[0]:.2f}, {current_pos[1]:.2f}, {current_pos[2]:.2f}]"
+            )
             return False
 
         def toggle_follow(vis):
@@ -340,6 +397,8 @@ class PLYSequenceViewer:
         vis.register_key_callback(82, reset_frame)  # R
         vis.register_key_callback(76, toggle_loop)  # L
         vis.register_key_callback(84, toggle_trail)  # T
+        vis.register_key_callback(71, toggle_floor)  # G
+        vis.register_key_callback(79, toggle_coord_frame)  # O
         vis.register_key_callback(67, center_camera)  # C
         vis.register_key_callback(70, toggle_follow)  # F
         vis.register_key_callback(61, speed_up)  # +
@@ -397,9 +456,13 @@ class PLYSequenceViewer:
         """Update the displayed mesh"""
         vis.clear_geometries()
         vis.add_geometry(self.meshes[self.current_frame], reset_bounding_box=False)
-        vis.add_geometry(self.floor, reset_bounding_box=False)
-        vis.add_geometry(self._create_grid(), reset_bounding_box=False)
-        vis.add_geometry(self.coord_frame, reset_bounding_box=False)
+
+        if self.show_floor:
+            vis.add_geometry(self.floor, reset_bounding_box=False)
+            vis.add_geometry(self.grid, reset_bounding_box=False)
+
+        if self.show_coord_frame:
+            vis.add_geometry(self.coord_frame, reset_bounding_box=False)
 
         if self.show_trail and self.trail_line:
             vis.add_geometry(self.trail_line, reset_bounding_box=False)

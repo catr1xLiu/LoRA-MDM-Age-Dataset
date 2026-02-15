@@ -333,7 +333,7 @@ def create_visualization(c3d_data, skeleton, show_labels=True, fps=30):
 
     # Create line objects for skeleton (gray and semi-transparent)
     lines = [
-        ax.plot([], [], [], color="gray", linewidth=1, alpha=0.5)[0] for _ in lines_data
+        ax.plot([], [], [], color="gray", linewidth=3, alpha=0.8)[0] for _ in lines_data
     ]
 
     # Display ALL physical markers (excluding virtual ones)
@@ -345,7 +345,14 @@ def create_visualization(c3d_data, skeleton, show_labels=True, fps=30):
             if data is not None:
                 color = get_body_part_color(label)
                 plot_obj = ax.plot(
-                    [], [], [], marker="o", markersize=4, color=color, linestyle="None"
+                    [],
+                    [],
+                    [],
+                    marker="o",
+                    markersize=8,
+                    color=color,
+                    linestyle="None",
+                    alpha=0.9,
                 )[0]
                 physical_markers_data.append(data)
                 physical_markers_plots.append(plot_obj)
