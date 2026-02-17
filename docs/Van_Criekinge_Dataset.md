@@ -254,6 +254,31 @@ Two versions available for able-bodied and stroke survivors:
 - **Stride count file:** `NrStrides` - Number of strides with good kinematic and kinetic data
 - **Visual presentations:** PNG figures of selected variables with corresponding MATLAB code
 
+## Joint Angular Velocity Heatmaps (HumanML3D)
+
+HumanML3D joint trajectories are stored as NPZ files in `data/humanml3d_joints_4/`, where each file contains:
+- `joints`: (T, 22, 3) joint positions in the canonical HumanML3D frame
+- `fps`: sampling rate (typically 20)
+- `pelvis_traj`: optional pelvis trajectory (global motion)
+
+To visualize per-joint angular velocity heatmaps (rad/s), use the script below. It estimates joint angles from adjacent bones and takes the first derivative over time.
+
+```bash
+# Single trial heatmap
+python3 7_joint_velocity_heatmap.py \
+  --input data/humanml3d_joints_4/SUBJ01/SUBJ1_0_humanml3d_22joints.npz \
+  --output outputs/SUBJ01_trial0_heatmap.png \
+  --normalize 100
+
+# Batch over all trials
+python3 7_joint_velocity_heatmap.py --all --output-dir outputs/velocity_heatmaps --normalize 100
+```
+
+Notes:
+- Angular velocity is computed as the time derivative of joint angle (rad/s).
+- End-effectors (wrist/foot) fall back to parent-bone orientation change.
+- Use `--normalize 100` to map each trial to a 0–100% gait cycle.
+
 #### Data Quality Notes
 - **Able-bodied participants:** 
   - Average 6 good strides for kinematic data
