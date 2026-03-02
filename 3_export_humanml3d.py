@@ -58,7 +58,7 @@ def estimate_axes(j):  # (T,24,3)
     lr = j[:, 1, :] - j[:, 2, :]
     lr = lr / (np.linalg.norm(lr, axis=1, keepdims=True) + 1e-8)
     # Forward = Up x LeftRight  (right-handed)
-    fwd = np.cross(up, lr)
+    fwd = np.cross(lr, up)
     fwd = fwd / (np.linalg.norm(fwd, axis=1, keepdims=True) + 1e-8)
     # Orthonormalize
     lr = np.cross(fwd, up)
