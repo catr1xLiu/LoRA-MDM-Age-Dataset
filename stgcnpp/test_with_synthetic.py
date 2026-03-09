@@ -268,7 +268,7 @@ def main():
     sys.path.insert(0, os.path.dirname(__file__))
     from model import STGCNPP
 
-    ckpt_path = os.path.join(os.path.dirname(__file__), '..', 'stgcnpp_ntu120_3dkp_joint.pth')
+    ckpt_path = os.path.join(os.path.dirname(__file__), 'checkpoints', 'stgcnpp_ntu120_3dkp_joint.pth')
     skel_path = '/tmp/synthetic_ntu.skeleton'
 
     print('=' * 60)
