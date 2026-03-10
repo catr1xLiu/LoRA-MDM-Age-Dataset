@@ -18,6 +18,7 @@ described in [PYSKL](https://arxiv.org/abs/2205.09443).
 | `model.py` | Full STGCN++ model (UnitGCN, MSTCN, backbone, head) |
 | `dataset.py` | `SkeletonDataset` — loads custom `.pkl` annotation files |
 | `train.py` | Fine-tuning script |
+| `inference.py` | Inference / evaluation script — (TODO) read NTU120 dataset, run model inference, report accuracy |
 | `pyproject.toml` | `uv` project / dependency manifest |
 
 ---
@@ -115,3 +116,9 @@ classification head (faster, useful when data is scarce).
   year={2022}
 }
 ```
+
+---
+
+## TODO
+
+- `inference.py` — to be implemented: read the NTU120 `.pkl` dataset, run the STGCN++ model in inference mode, and report accuracy metrics (top-1/top-5) across the test split.
