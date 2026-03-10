@@ -41,7 +41,11 @@ import pickle
 
 import torch
 
+from graph import _NTU_NEIGHBOR_BASE
 from model import STGCNPP
+
+# Convert from 1-indexed to 0-indexed bone pairs
+NTU_PAIRS = [(i - 1, j - 1) for i, j in _NTU_NEIGHBOR_BASE]
 
 data_path = "data/ntu120_3danno.pkl"
 
@@ -97,40 +101,105 @@ NTU_ACTION_NAMES = {
 }
 # fmt: on
 
+
+def normalize_skeleton(keypoint, rot_to_align=True):
+    # keypoint: (M, T, V, C)
+
+    # Step 1: root-centre (SpineBase = joint 0)
+    keypoint = keypoint - keypoint[:, :, 0:1, :]
+
+    if not rot_to_align:
+        return keypoint
+
+    # Step 2: orient — rotate so hip vector aligns with X axis
+    # HipL = joint 12, HipR = joint 16
+    hip_l = keypoint[0, 0, 12, :]  # (3,)
+    hip_r = keypoint[0, 0, 16, :]  # (3,)
+    hip_vec = hip_r - hip_l  # vector pointing right
+
+    # Angle between hip_vec and X axis, in the XZ plane
+    angle = torch.atan2(hip_vec[2], hip_vec[0])  # rotation around Y axis
+
+    cos_a, sin_a = torch.cos(angle), torch.sin(angle)
+    rot = torch.tensor(
+        [
+            [cos_a, 0, sin_a],
+            [0, 1, 0],
+            [-sin_a, 0, cos_a],
+        ],
+        dtype=torch.float32,
+    )
+
+    # Apply rotation to all joints: (M, T, V, 3) @ (3, 3)
+    keypoint = keypoint @ rot.T
+    return keypoint
+
+
+# Load dataset
 with open(data_path, "rb") as f:
     data = pickle.load(f)
 
+# Load model
 DEVICE = torch.device("cuda:0")
 model: STGCNPP = STGCNPP(pretrained="checkpoints/stgcnpp_ntu120_3dkp_joint.pth")
 model = model.to(DEVICE)
 model.eval()
 model.freeze_backbone()
 
-for anotation in data["annotations"]:
+# Counters
+total_clips = len(data["annotations"])
+total_clips = 3000
+correct_count: int = 0
+top5_correct_count: int = 0
+
+# Go through all clips
+for clip in range(total_clips):
+    # Extract anotation and label
+    anotation = data["annotations"][clip]
     label: int = int(anotation["label"])
+
+    # Conver keypoint to expected format by model
+    # Model expects (N, M, T, V, C) where N = 1 (1 clip), M = 2 (two skeletons)
     keypoint_raw = torch.tensor(anotation["keypoint"], dtype=torch.float32)
-    print("Keypoints shape:", keypoint_raw.shape)
-    keypoint_raw = keypoint_raw - keypoint_raw[:, :, 0:1, :]
+    keypoint_raw = normalize_skeleton(keypoint_raw, rot_to_align=True)
     if keypoint_raw.shape[0] == 1:
         padding = torch.zeros_like(keypoint_raw)  # (1, T, V, C)
-        keypoint_raw = torch.cat([keypoint_raw, padding], dim=0)  # (2, T, V, C)
+        keypoint_bone = torch.cat([keypoint_raw, padding], dim=0)  # (2, T, V, C)
+    keypoint = keypoint_raw.unsqueeze(0)  # shape: (1, 2, T, V, C)
 
-    keypoint = keypoint_raw.unsqueeze(0).to(DEVICE)
+    # Run inference using GPU
     with torch.no_grad():
-        output = model(keypoint)
+        output = model(keypoint.to(DEVICE))
 
+    # Convert confidence to probability using SoftMax function
     probs = torch.softmax(output, dim=1)
-    values, indies = torch.topk(probs, k=5, dim=1)
+
+    # Take top 10 results
+    values, indies = torch.topk(probs, k=10, dim=1)
     values, indies = values.squeeze(), indies.squeeze()
-    print(values, indies)
-    print("Top 5 results: ")
-    for i in range(5):
-        index: int = int(indies[i])
-        if index not in NTU_ACTION_NAMES:
-            print(
-                f"ERROR: top {i + 1} action label ({indies[i]}) not recognized, skipping..."
-            )
-            continue
-        print(f"({i + 1}) - {NTU_ACTION_NAMES[index]} - {values[i] * 100}%")
-    print("Dataset label is: " + NTU_ACTION_NAMES[label])
-    print("\n\n")
+
+    top_k_correct = -1  # None
+    for k in range(5):
+        if indies[k] == label:
+            top_k_correct = k
+            top5_correct_count += 1
+            break
+
+    correct_count += int(indies[0] == label)
+
+    index: int = int(indies[0])
+    result_action_name = (
+        NTU_ACTION_NAMES[index] if index in NTU_ACTION_NAMES else "<< Unknown Action >>"
+    )
+    label_action_name = (
+        NTU_ACTION_NAMES[label] if label in NTU_ACTION_NAMES else "<< Unknown Action >>"
+    )
+    percent_conf = int(values[0] * 100)
+
+    print(
+        f"Tested clip {clip + 1} / {total_clips}. Label: {label_action_name}, Prediction: {result_action_name} ({percent_conf})."
+    )
+
+print(
+    f"Out of total {total_clips} tested clips, {correct_count} are correctly identified, {top5_correct_count} are in top 5 results."
+)
