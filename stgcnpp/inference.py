@@ -162,6 +162,7 @@ for clip in range(total_clips):
     # Model expects (N, M, T, V, C) where N = 1 (1 clip), M = 2 (two skeletons)
     keypoint_raw = torch.tensor(anotation["keypoint"], dtype=torch.float32)
     keypoint_raw = normalize_skeleton(keypoint_raw, rot_to_align=True)
+    # TODO: should there be more proccessing here, need to look at original project
     if keypoint_raw.shape[0] == 1:
         padding = torch.zeros_like(keypoint_raw)  # (1, T, V, C)
         keypoint_bone = torch.cat([keypoint_raw, padding], dim=0)  # (2, T, V, C)
