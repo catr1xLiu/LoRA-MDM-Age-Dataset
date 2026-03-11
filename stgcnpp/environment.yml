@@ -8,11 +8,15 @@ channels:
 dependencies:
   - python=3.10
   - pip
+  - wget
   - numpy>=1.24
   - tqdm>=4.65
   - pip:
-      - torch>=2.0
-      - torchvision>=0.15
+      - --index-url https://download.pytorch.org/whl/cu128
+      - --extra-index-url https://pypi.org/simple
+      - torch==2.9.1 
+      - torchvision==0.24.1 
+      - torchaudio==2.9.1
       - opencv-python>=4.7
       - ipython>=8.38.0
       - ipynb>=0.5.1
