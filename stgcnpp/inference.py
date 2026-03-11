@@ -39,10 +39,12 @@ The value of the annotations field is a list of skeleton annotations, each skele
 
 import pickle
 
+import numpy as np
 import torch
 
 from graph import _NTU_NEIGHBOR_BASE
 from model import STGCNPP
+from utils import _angle_between, _rotation_matrix
 
 # Convert from 1-indexed to 0-indexed bone pairs
 NTU_PAIRS = [(i - 1, j - 1) for i, j in _NTU_NEIGHBOR_BASE]
@@ -102,37 +104,72 @@ NTU_ACTION_NAMES = {
 # fmt: on
 
 
-def normalize_skeleton(keypoint, rot_to_align=True):
-    # keypoint: (M, T, V, C)
+def normalize_skeleton(keypoint):
+    """Reproduce pyskl PreNormalize3D.
 
-    # Step 1: root-centre (SpineBase = joint 0)
-    keypoint = keypoint - keypoint[:, :, 0:1, :]
+    Input:  np.ndarray (M, T, V, C) — raw keypoints from the annotation pkl
+    Output: np.ndarray (M, T', V, C) — centred, aligned, zero-frames stripped
 
-    if not rot_to_align:
+    Three differences from the old version:
+      1. Centres on joint 1 (SpineMid), not joint 0
+      2. Aligns spine (joint 0→1) to Z-axis [0,0,1], then
+         shoulders (joint 8→4) to X-axis [1,0,0] via Rodrigues rotation
+      3. Strips all-zero frames and masks zero joints
+    """
+    keypoint = keypoint.copy().astype(np.float32)
+    M, T, V, C = keypoint.shape
+
+    if keypoint.sum() == 0:
         return keypoint
 
-    # Step 2: orient — rotate so hip vector aligns with X axis
-    # HipL = joint 12, HipR = joint 16
-    hip_l = keypoint[0, 0, 12, :]  # (3,)
-    hip_r = keypoint[0, 0, 16, :]  # (3,)
-    hip_vec = hip_r - hip_l  # vector pointing right
+    # 1. Strip all-zero frames; if 2 persons, keep the one with more valid frames as person 0
+    index0 = [i for i in range(T) if not np.allclose(keypoint[0, i], 0, atol=1e-5)]
 
-    # Angle between hip_vec and X axis, in the XZ plane
-    angle = torch.atan2(hip_vec[2], hip_vec[0])  # rotation around Y axis
+    if M == 2:
+        index1 = [i for i in range(T) if not np.allclose(keypoint[1, i], 0, atol=1e-5)]
+        if len(index0) < len(index1):
+            keypoint = keypoint[:, index1]
+            keypoint = keypoint[[1, 0]]  # swap so the "main" person is index 0
+        else:
+            keypoint = keypoint[:, index0]
+    else:
+        keypoint = keypoint[:, index0]
 
-    cos_a, sin_a = torch.cos(angle), torch.sin(angle)
-    rot = torch.tensor(
-        [
-            [cos_a, 0, sin_a],
-            [0, 1, 0],
-            [-sin_a, 0, cos_a],
-        ],
-        dtype=torch.float32,
-    )
+    # 2. Centre on joint 1 (SpineMid) of person 0, frame 0
+    main_body_center = keypoint[0, 0, 1].copy()
+    mask = ((keypoint != 0).sum(-1) > 0)[
+        ..., None
+    ]  # (M, T', V, 1) — keep zero joints at zero
+    keypoint = (keypoint - main_body_center) * mask
 
-    # Apply rotation to all joints: (M, T, V, 3) @ (3, 3)
-    keypoint = keypoint @ rot.T
+    # 3. Rotate spine vector (joint 0 → joint 1) onto Z-axis [0, 0, 1]
+    spine = keypoint[0, 0, 1] - keypoint[0, 0, 0]
+    axis_z = np.cross(spine, [0, 0, 1])
+    angle_z = _angle_between(spine, [0, 0, 1])
+    rot_z = _rotation_matrix(axis_z, angle_z)
+    keypoint = np.einsum("mtvc,kc->mtvk", keypoint, rot_z)
+
+    # 4. Rotate shoulder vector (joint 8 → joint 4) onto X-axis [1, 0, 0]
+    shoulder = keypoint[0, 0, 8] - keypoint[0, 0, 4]
+    axis_x = np.cross(shoulder, [1, 0, 0])
+    angle_x = _angle_between(shoulder, [1, 0, 0])
+    rot_x = _rotation_matrix(axis_x, angle_x)
+    keypoint = np.einsum("mtvc,kc->mtvk", keypoint, rot_x)
+
     return keypoint
+
+
+def uniform_sample(keypoint, clip_len=100):
+    """Uniformly resample to exactly clip_len frames along the T axis.
+
+    Input:  np.ndarray (M, T, V, C)
+    Output: np.ndarray (M, clip_len, V, C)
+    """
+    T = keypoint.shape[1]
+    if T == clip_len:
+        return keypoint
+    indices = np.linspace(0, T - 1, clip_len).astype(int)
+    return keypoint[:, indices]
 
 
 # Load dataset
@@ -148,7 +185,7 @@ model.freeze_backbone()
 
 # Counters
 total_clips = len(data["annotations"])
-total_clips = 3000
+total_clips = 5000
 correct_count: int = 0
 top5_correct_count: int = 0
 
@@ -160,17 +197,20 @@ for clip in range(total_clips):
 
     # Conver keypoint to expected format by model
     # Model expects (N, M, T, V, C) where N = 1 (1 clip), M = 2 (two skeletons)
-    keypoint_raw = torch.tensor(anotation["keypoint"], dtype=torch.float32)
-    keypoint_raw = normalize_skeleton(keypoint_raw, rot_to_align=True)
-    # TODO: should there be more proccessing here, need to look at original project
+
+    keypoint_np = anotation["keypoint"]
+    keypoint_np = normalize_skeleton(keypoint_np)
+    keypoint_np = uniform_sample(keypoint_np)
+    keypoint_raw = torch.tensor(keypoint_np, dtype=torch.float32)
     if keypoint_raw.shape[0] == 1:
         padding = torch.zeros_like(keypoint_raw)  # (1, T, V, C)
-        keypoint_bone = torch.cat([keypoint_raw, padding], dim=0)  # (2, T, V, C)
+        keypoint_raw = torch.cat([keypoint_raw, padding], dim=0)  # (2, T, V, C)
     keypoint = keypoint_raw.unsqueeze(0)  # shape: (1, 2, T, V, C)
+    keypoint = keypoint.to(DEVICE)
 
     # Run inference using GPU
     with torch.no_grad():
-        output = model(keypoint.to(DEVICE))
+        output = model(keypoint)
 
     # Convert confidence to probability using SoftMax function
     probs = torch.softmax(output, dim=1)
