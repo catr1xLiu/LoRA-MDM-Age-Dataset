@@ -34,20 +34,14 @@ The value of the annotations field is a list of skeleton annotations, each skele
  12  HipL       13  KneeL      14  AnkleL       15  FootL
  16  HipR       17  KneeR      18  AnkleR       19  FootR
  20  SpineShoulder  21  HandTipL  22  ThumbL
-                    23  HandTipR  24  ThumbR
+                   23  HandTipR  24  ThumbR
 """
 
-import pickle
-
-import numpy as np
 import torch
+from torch.utils.data import DataLoader, Subset
 
-from graph import _NTU_NEIGHBOR_BASE
+from dataset import SkeletonDataset
 from model import STGCNPP
-from utils import _angle_between, _rotation_matrix
-
-# Convert from 1-indexed to 0-indexed bone pairs
-NTU_PAIRS = [(i - 1, j - 1) for i, j in _NTU_NEIGHBOR_BASE]
 
 data_path = "data/ntu120_3danno.pkl"
 
@@ -103,144 +97,65 @@ NTU_ACTION_NAMES = {
 }
 # fmt: on
 
+TOTAL_CLIPS = 5000
+BATCH_SIZE = 4
+NUM_WORKERS = 2
 
-def normalize_skeleton(keypoint):
-    """Reproduce pyskl PreNormalize3D.
+# Device
+DEVICE = torch.device("mps" if torch.backends.mps.is_available() else
+                       "cuda" if torch.cuda.is_available() else "cpu")
+print(f"Using device: {DEVICE}")
 
-    Input:  np.ndarray (M, T, V, C) — raw keypoints from the annotation pkl
-    Output: np.ndarray (M, T', V, C) — centred, aligned, zero-frames stripped
+# Dataset & DataLoader
+dataset = SkeletonDataset(data_path, clip_len=100, max_person=2, normalize=True)
+subset = Subset(dataset, range(TOTAL_CLIPS))
+loader = DataLoader(subset, batch_size=BATCH_SIZE, num_workers=NUM_WORKERS,
+                    pin_memory=(DEVICE.type != "cpu"), shuffle=False)
 
-    Three differences from the old version:
-      1. Centres on joint 1 (SpineMid), not joint 0
-      2. Aligns spine (joint 0→1) to Z-axis [0,0,1], then
-         shoulders (joint 8→4) to X-axis [1,0,0] via Rodrigues rotation
-      3. Strips all-zero frames and masks zero joints
-    """
-    keypoint = keypoint.copy().astype(np.float32)
-    M, T, V, C = keypoint.shape
-
-    if keypoint.sum() == 0:
-        return keypoint
-
-    # 1. Strip all-zero frames; if 2 persons, keep the one with more valid frames as person 0
-    index0 = [i for i in range(T) if not np.allclose(keypoint[0, i], 0, atol=1e-5)]
-
-    if M == 2:
-        index1 = [i for i in range(T) if not np.allclose(keypoint[1, i], 0, atol=1e-5)]
-        if len(index0) < len(index1):
-            keypoint = keypoint[:, index1]
-            keypoint = keypoint[[1, 0]]  # swap so the "main" person is index 0
-        else:
-            keypoint = keypoint[:, index0]
-    else:
-        keypoint = keypoint[:, index0]
-
-    # 2. Centre on joint 1 (SpineMid) of person 0, frame 0
-    main_body_center = keypoint[0, 0, 1].copy()
-    mask = ((keypoint != 0).sum(-1) > 0)[
-        ..., None
-    ]  # (M, T', V, 1) — keep zero joints at zero
-    keypoint = (keypoint - main_body_center) * mask
-
-    # 3. Rotate spine vector (joint 0 → joint 1) onto Z-axis [0, 0, 1]
-    spine = keypoint[0, 0, 1] - keypoint[0, 0, 0]
-    axis_z = np.cross(spine, [0, 0, 1])
-    angle_z = _angle_between(spine, [0, 0, 1])
-    rot_z = _rotation_matrix(axis_z, angle_z)
-    keypoint = np.einsum("mtvc,kc->mtvk", keypoint, rot_z)
-
-    # 4. Rotate shoulder vector (joint 8 → joint 4) onto X-axis [1, 0, 0]
-    shoulder = keypoint[0, 0, 8] - keypoint[0, 0, 4]
-    axis_x = np.cross(shoulder, [1, 0, 0])
-    angle_x = _angle_between(shoulder, [1, 0, 0])
-    rot_x = _rotation_matrix(axis_x, angle_x)
-    keypoint = np.einsum("mtvc,kc->mtvk", keypoint, rot_x)
-
-    return keypoint
-
-
-def uniform_sample(keypoint, clip_len=100):
-    """Uniformly resample to exactly clip_len frames along the T axis.
-
-    Input:  np.ndarray (M, T, V, C)
-    Output: np.ndarray (M, clip_len, V, C)
-    """
-    T = keypoint.shape[1]
-    if T == clip_len:
-        return keypoint
-    indices = np.linspace(0, T - 1, clip_len).astype(int)
-    return keypoint[:, indices]
-
-
-# Load dataset
-with open(data_path, "rb") as f:
-    data = pickle.load(f)
-
-# Load model
-DEVICE = torch.device("cuda:0")
+# Model
 model: STGCNPP = STGCNPP(pretrained="checkpoints/stgcnpp_ntu120_3dkp_joint.pth")
 model = model.to(DEVICE)
 model.eval()
 model.freeze_backbone()
 
 # Counters
-total_clips = len(data["annotations"])
-total_clips = 5000
 correct_count: int = 0
 top5_correct_count: int = 0
+processed: int = 0
 
-# Go through all clips
-for clip in range(total_clips):
-    # Extract anotation and label
-    anotation = data["annotations"][clip]
-    label: int = int(anotation["label"])
+with torch.no_grad():
+    for keypoints, labels in loader:
+        keypoints = keypoints.to(DEVICE)          # (N, 2, 100, 25, 3)
+        labels = labels.to(DEVICE)                # (N,)
 
-    # Conver keypoint to expected format by model
-    # Model expects (N, M, T, V, C) where N = 1 (1 clip), M = 2 (two skeletons)
+        output = model(keypoints)                 # (N, 120)
+        probs = torch.softmax(output, dim=1)
 
-    keypoint_np = anotation["keypoint"]
-    keypoint_np = normalize_skeleton(keypoint_np)
-    keypoint_np = uniform_sample(keypoint_np)
-    keypoint_raw = torch.tensor(keypoint_np, dtype=torch.float32)
-    if keypoint_raw.shape[0] == 1:
-        padding = torch.zeros_like(keypoint_raw)  # (1, T, V, C)
-        keypoint_raw = torch.cat([keypoint_raw, padding], dim=0)  # (2, T, V, C)
-    keypoint = keypoint_raw.unsqueeze(0)  # shape: (1, 2, T, V, C)
-    keypoint = keypoint.to(DEVICE)
+        _, top5_indices = torch.topk(probs, k=5, dim=1)   # (N, 5)
+        top1_indices = top5_indices[:, 0]                  # (N,)
 
-    # Run inference using GPU
-    with torch.no_grad():
-        output = model(keypoint)
+        correct_count += int((top1_indices == labels).sum())
+        top5_correct_count += int(
+            (top5_indices == labels.unsqueeze(1)).any(dim=1).sum()
+        )
 
-    # Convert confidence to probability using SoftMax function
-    probs = torch.softmax(output, dim=1)
-
-    # Take top 10 results
-    values, indies = torch.topk(probs, k=10, dim=1)
-    values, indies = values.squeeze(), indies.squeeze()
-
-    top_k_correct = -1  # None
-    for k in range(5):
-        if indies[k] == label:
-            top_k_correct = k
-            top5_correct_count += 1
-            break
-
-    correct_count += int(indies[0] == label)
-
-    index: int = int(indies[0])
-    result_action_name = (
-        NTU_ACTION_NAMES[index] if index in NTU_ACTION_NAMES else "<< Unknown Action >>"
-    )
-    label_action_name = (
-        NTU_ACTION_NAMES[label] if label in NTU_ACTION_NAMES else "<< Unknown Action >>"
-    )
-    percent_conf = int(values[0] * 100)
-
-    print(
-        f"Tested clip {clip + 1} / {total_clips}. Label: {label_action_name}, Prediction: {result_action_name} ({percent_conf})."
-    )
+        batch_n = labels.size(0)
+        for i in range(batch_n):
+            processed += 1
+            idx = int(top1_indices[i])
+            label = int(labels[i])
+            conf = int(probs[i, idx] * 100)
+            pred_name = NTU_ACTION_NAMES.get(idx, "<< Unknown Action >>")
+            label_name = NTU_ACTION_NAMES.get(label, "<< Unknown Action >>")
+            print(
+                f"Tested clip {processed} / {TOTAL_CLIPS}. "
+                f"Label: {label_name}, Prediction: {pred_name} ({conf}%)."
+            )
 
 print(
-    f"Out of total {total_clips} tested clips, {correct_count} are correctly identified, {top5_correct_count} are in top 5 results."
+    f"\nOut of total {TOTAL_CLIPS} tested clips, "
+    f"{correct_count} are correctly identified (top-1), "
+    f"{top5_correct_count} are in top-5 results."
 )
+print(f"Top-1 accuracy: {correct_count / TOTAL_CLIPS * 100:.1f}%")
+print(f"Top-5 accuracy: {top5_correct_count / TOTAL_CLIPS * 100:.1f}%")

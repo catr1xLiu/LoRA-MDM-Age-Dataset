@@ -19,6 +19,61 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
+from utils import _angle_between, _rotation_matrix
+
+
+def normalize_skeleton(keypoint: np.ndarray) -> np.ndarray:
+    """Reproduce pyskl PreNormalize3D.
+
+    Input:  np.ndarray (M, T, V, C) — raw keypoints from the annotation pkl
+    Output: np.ndarray (M, T', V, C) — centred, aligned, zero-frames stripped
+
+    Steps:
+      1. Strips all-zero frames; if 2 persons, keeps the one with more valid
+         frames as person 0.
+      2. Centres on joint 1 (SpineMid) of person 0, frame 0.
+      3. Aligns spine (joint 0→1) to Z-axis [0, 0, 1].
+      4. Aligns shoulders (joint 8→4) to X-axis [1, 0, 0].
+    """
+    keypoint = keypoint.copy().astype(np.float32)
+    M, T, V, C = keypoint.shape
+
+    if keypoint.sum() == 0:
+        return keypoint
+
+    # 1. Strip all-zero frames; keep person with most valid frames as index 0
+    index0 = [i for i in range(T) if not np.allclose(keypoint[0, i], 0, atol=1e-5)]
+    if M == 2:
+        index1 = [i for i in range(T) if not np.allclose(keypoint[1, i], 0, atol=1e-5)]
+        if len(index0) < len(index1):
+            keypoint = keypoint[:, index1]
+            keypoint = keypoint[[1, 0]]
+        else:
+            keypoint = keypoint[:, index0]
+    else:
+        keypoint = keypoint[:, index0]
+
+    # 2. Centre on joint 1 (SpineMid) of person 0, frame 0
+    main_body_center = keypoint[0, 0, 1].copy()
+    mask = ((keypoint != 0).sum(-1) > 0)[..., None]
+    keypoint = (keypoint - main_body_center) * mask
+
+    # 3. Rotate spine vector (joint 0 → joint 1) onto Z-axis
+    spine = keypoint[0, 0, 1] - keypoint[0, 0, 0]
+    axis_z = np.cross(spine, [0, 0, 1])
+    angle_z = _angle_between(spine, [0, 0, 1])
+    rot_z = _rotation_matrix(axis_z, angle_z)
+    keypoint = np.einsum("mtvc,kc->mtvk", keypoint, rot_z)
+
+    # 4. Rotate shoulder vector (joint 8 → joint 4) onto X-axis
+    shoulder = keypoint[0, 0, 8] - keypoint[0, 0, 4]
+    axis_x = np.cross(shoulder, [1, 0, 0])
+    angle_x = _angle_between(shoulder, [1, 0, 0])
+    rot_x = _rotation_matrix(axis_x, angle_x)
+    keypoint = np.einsum("mtvc,kc->mtvk", keypoint, rot_x)
+
+    return keypoint
+
 
 class SkeletonDataset(Dataset):
     """Skeleton action recognition dataset.
@@ -29,10 +84,12 @@ class SkeletonDataset(Dataset):
         max_person: maximum number of persons; extras are cropped, missing are zero-padded.
         split:      optional string key; if provided the annotation file is expected to be a
                     dict with split names as keys (compatible with NTU-style .pkl files).
+        normalize:  if True, apply skeleton normalization (centering + rotation alignment).
     """
 
     def __init__(self, ann_file: str, clip_len: int = 100,
-                 max_person: int = 2, split: str | None = None):
+                 max_person: int = 2, split: str | None = None,
+                 normalize: bool = True):
         with open(ann_file, 'rb') as f:
             data = pickle.load(f)
 
@@ -42,17 +99,18 @@ class SkeletonDataset(Dataset):
         self.samples = data
         self.clip_len = clip_len
         self.max_person = max_person
+        self.normalize = normalize
 
     def __len__(self):
         return len(self.samples)
 
     def _sample_frames(self, kp: np.ndarray) -> np.ndarray:
-        """Uniformly sample clip_len frames from (T, V, C) or (M, T, V, C)."""
-        T = kp.shape[-3]
+        """Uniformly sample clip_len frames from (M, T, V, C)."""
+        T = kp.shape[1]
         if T == self.clip_len:
             return kp
         indices = np.linspace(0, T - 1, self.clip_len, dtype=int)
-        return kp[..., indices, :, :]
+        return kp[:, indices]
 
     def __getitem__(self, idx):
         sample = self.samples[idx]
@@ -62,6 +120,9 @@ class SkeletonDataset(Dataset):
         if kp.ndim == 3:          # (T, V, C) → (1, T, V, C)
             kp = kp[np.newaxis]
 
+        if self.normalize:
+            kp = normalize_skeleton(kp)  # may change T (strips zero frames)
+
         # Pad / crop persons
         M = kp.shape[0]
         if M < self.max_person:
@@ -70,5 +131,5 @@ class SkeletonDataset(Dataset):
         else:
             kp = kp[:self.max_person]
 
-        kp = self._sample_frames(kp)         # (M, clip_len, V, C)
+        kp = self._sample_frames(kp)         # (max_person, clip_len, V, C)
         return torch.from_numpy(kp), label
