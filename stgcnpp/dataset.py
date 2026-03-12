@@ -14,6 +14,7 @@ T = number of frames  (padded / sampled to clip_len)
 V = 25  (NTU RGB+D joints)
 C = 3   (x, y, z)
 """
+
 import pickle
 import numpy as np
 import torch
@@ -39,7 +40,7 @@ def normalize_skeleton(keypoint: np.ndarray) -> np.ndarray:
     M, T, V, C = keypoint.shape
 
     if keypoint.sum() == 0:
-        return keypoint
+        return keypoint.astype(np.float32)
 
     # 1. Strip all-zero frames; keep person with most valid frames as index 0
     index0 = [i for i in range(T) if not np.allclose(keypoint[0, i], 0, atol=1e-5)]
@@ -72,7 +73,7 @@ def normalize_skeleton(keypoint: np.ndarray) -> np.ndarray:
     rot_x = _rotation_matrix(axis_x, angle_x)
     keypoint = np.einsum("mtvc,kc->mtvk", keypoint, rot_x)
 
-    return keypoint
+    return keypoint.astype(np.float32)
 
 
 class SkeletonDataset(Dataset):
@@ -87,16 +88,33 @@ class SkeletonDataset(Dataset):
         normalize:  if True, apply skeleton normalization (centering + rotation alignment).
     """
 
-    def __init__(self, ann_file: str, clip_len: int = 100,
-                 max_person: int = 2, split: str | None = None,
-                 normalize: bool = True):
-        with open(ann_file, 'rb') as f:
+    def __init__(
+        self,
+        ann_file: str,
+        clip_len: int = 100,
+        max_person: int = 2,
+        split: str | None = None,
+        normalize: bool = True,
+    ):
+        with open(ann_file, "rb") as f:
             data = pickle.load(f)
 
-        if split is not None and isinstance(data, dict):
-            data = data[split]
-
-        self.samples = data
+        if isinstance(data, dict) and "annotations" in data:
+            if split is not None and "split" in data:
+                frame_dirs = data["split"].get(split, None)
+                if frame_dirs is not None:
+                    frame_to_idx = {
+                        ann["frame_dir"]: i for i, ann in enumerate(data["annotations"])
+                    }
+                    self.samples = [
+                        data["annotations"][frame_to_idx[fd]] for fd in frame_dirs
+                    ]
+                else:
+                    self.samples = data["annotations"]
+            else:
+                self.samples = data["annotations"]
+        else:
+            self.samples = data
         self.clip_len = clip_len
         self.max_person = max_person
         self.normalize = normalize
@@ -114,10 +132,10 @@ class SkeletonDataset(Dataset):
 
     def __getitem__(self, idx):
         sample = self.samples[idx]
-        kp = sample['keypoint'].astype(np.float32)   # (M, T, V, C) or (T, V, C)
-        label = int(sample['label'])
+        kp = sample["keypoint"].astype(np.float32)  # (M, T, V, C) or (T, V, C)
+        label = int(sample["label"])
 
-        if kp.ndim == 3:          # (T, V, C) → (1, T, V, C)
+        if kp.ndim == 3:  # (T, V, C) → (1, T, V, C)
             kp = kp[np.newaxis]
 
         if self.normalize:
@@ -129,7 +147,7 @@ class SkeletonDataset(Dataset):
             pad = np.zeros((self.max_person - M, *kp.shape[1:]), dtype=np.float32)
             kp = np.concatenate([kp, pad], axis=0)
         else:
-            kp = kp[:self.max_person]
+            kp = kp[: self.max_person]
 
-        kp = self._sample_frames(kp)         # (max_person, clip_len, V, C)
+        kp = self._sample_frames(kp)  # (max_person, clip_len, V, C)
         return torch.from_numpy(kp), label

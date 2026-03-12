@@ -31,14 +31,14 @@ The value of the annotations field is a list of skeleton annotations, each skele
   0  SpineBase   1  SpineMid    2  Neck         3  Head
   4  ShoulderL   5  ElbowL      6  WristL       7  HandL
   8  ShoulderR   9  ElbowR     10  WristR       11  HandR
- 12  HipL       13  KneeL      14  AnkleL       15  FootL
- 16  HipR       17  KneeR      18  AnkleR       19  FootR
+ 12  HipL       13  KneeL     14  AnkleL       15  FootL
+ 16  HipR       17  KneeR     18  AnkleR       19  FootR
  20  SpineShoulder  21  HandTipL  22  ThumbL
-                   23  HandTipR  24  ThumbR
+                    23  HandTipR  24  ThumbR
 """
 
 import torch
-from torch.utils.data import DataLoader, Subset
+from torch.utils.data import DataLoader
 
 from dataset import SkeletonDataset
 from model import STGCNPP
@@ -97,65 +97,85 @@ NTU_ACTION_NAMES = {
 }
 # fmt: on
 
-TOTAL_CLIPS = 5000
-BATCH_SIZE = 4
-NUM_WORKERS = 2
+BATCH_SIZE = 16
+NUM_WORKERS = 4
+PRINT_EVERY = 500
 
-# Device
-DEVICE = torch.device("mps" if torch.backends.mps.is_available() else
-                       "cuda" if torch.cuda.is_available() else "cpu")
-print(f"Using device: {DEVICE}")
 
-# Dataset & DataLoader
-dataset = SkeletonDataset(data_path, clip_len=100, max_person=2, normalize=True)
-subset = Subset(dataset, range(TOTAL_CLIPS))
-loader = DataLoader(subset, batch_size=BATCH_SIZE, num_workers=NUM_WORKERS,
-                    pin_memory=(DEVICE.type != "cpu"), shuffle=False)
+def run_inference():
+    # Device
+    DEVICE = torch.device(
+        "mps"
+        if torch.backends.mps.is_available()
+        else "cuda"
+        if torch.cuda.is_available()
+        else "cpu"
+    )
+    print(f"Using device: {DEVICE}")
 
-# Model
-model: STGCNPP = STGCNPP(pretrained="checkpoints/stgcnpp_ntu120_3dkp_joint.pth")
-model = model.to(DEVICE)
-model.eval()
-model.freeze_backbone()
+    # Dataset & DataLoader - use full xsub_val split
+    dataset = SkeletonDataset(
+        data_path, clip_len=100, max_person=2, normalize=True, split="xsub_val"
+    )
+    total_clips = len(dataset)
+    print(f"Running inference on {total_clips} clips (full xsub_val set)")
 
-# Counters
-correct_count: int = 0
-top5_correct_count: int = 0
-processed: int = 0
+    loader = DataLoader(
+        dataset,
+        batch_size=BATCH_SIZE,
+        num_workers=NUM_WORKERS,
+        pin_memory=(DEVICE.type != "cpu"),
+        shuffle=False,
+        prefetch_factor=2 if NUM_WORKERS > 0 else None,
+    )
 
-with torch.no_grad():
-    for keypoints, labels in loader:
-        keypoints = keypoints.to(DEVICE)          # (N, 2, 100, 25, 3)
-        labels = labels.to(DEVICE)                # (N,)
+    # Model
+    model: STGCNPP = STGCNPP(pretrained="checkpoints/stgcnpp_ntu120_3dkp_joint.pth")
+    model = model.to(DEVICE)
+    model.eval()
+    model.freeze_backbone()
 
-        output = model(keypoints)                 # (N, 120)
-        probs = torch.softmax(output, dim=1)
+    # Counters
+    correct_count: int = 0
+    top5_correct_count: int = 0
+    processed: int = 0
 
-        _, top5_indices = torch.topk(probs, k=5, dim=1)   # (N, 5)
-        top1_indices = top5_indices[:, 0]                  # (N,)
+    from tqdm import tqdm
 
-        correct_count += int((top1_indices == labels).sum())
-        top5_correct_count += int(
-            (top5_indices == labels.unsqueeze(1)).any(dim=1).sum()
-        )
+    with torch.no_grad():
+        for keypoints, labels in tqdm(loader, desc="Inference"):
+            keypoints = keypoints.to(DEVICE)  # (N, 2, 100, 25, 3)
+            labels = labels.to(DEVICE)  # (N,)
 
-        batch_n = labels.size(0)
-        for i in range(batch_n):
-            processed += 1
-            idx = int(top1_indices[i])
-            label = int(labels[i])
-            conf = int(probs[i, idx] * 100)
-            pred_name = NTU_ACTION_NAMES.get(idx, "<< Unknown Action >>")
-            label_name = NTU_ACTION_NAMES.get(label, "<< Unknown Action >>")
-            print(
-                f"Tested clip {processed} / {TOTAL_CLIPS}. "
-                f"Label: {label_name}, Prediction: {pred_name} ({conf}%)."
+            output = model(keypoints)  # (N, 120)
+            probs = torch.softmax(output, dim=1)
+
+            _, top5_indices = torch.topk(probs, k=5, dim=1)  # (N, 5)
+            top1_indices = top5_indices[:, 0]  # (N,)
+
+            correct_count += int((top1_indices == labels).sum())
+            top5_correct_count += int(
+                (top5_indices == labels.unsqueeze(1)).any(dim=1).sum()
             )
 
-print(
-    f"\nOut of total {TOTAL_CLIPS} tested clips, "
-    f"{correct_count} are correctly identified (top-1), "
-    f"{top5_correct_count} are in top-5 results."
-)
-print(f"Top-1 accuracy: {correct_count / TOTAL_CLIPS * 100:.1f}%")
-print(f"Top-5 accuracy: {top5_correct_count / TOTAL_CLIPS * 100:.1f}%")
+            processed += keypoints.size(0)
+
+            # Print progress every PRINT_EVERY batches
+            if processed // BATCH_SIZE % PRINT_EVERY == 0:
+                current_acc = correct_count / processed * 100
+                print(
+                    f"Processed {processed}/{total_clips} clips. "
+                    f"Current Top-1: {current_acc:.1f}%"
+                )
+
+    print(
+        f"\nOut of total {total_clips} tested clips, "
+        f"{correct_count} are correctly identified (top-1), "
+        f"{top5_correct_count} are in top-5 results."
+    )
+    print(f"Top-1 accuracy: {correct_count / total_clips * 100:.2f}%")
+    print(f"Top-5 accuracy: {top5_correct_count / total_clips * 100:.2f}%")
+
+
+if __name__ == "__main__":
+    run_inference()
