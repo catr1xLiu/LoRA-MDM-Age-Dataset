@@ -16,6 +16,7 @@ C = 3   (x, y, z)
 """
 
 import pickle
+
 import numpy as np
 import torch
 from torch.utils.data import Dataset
@@ -123,12 +124,41 @@ class SkeletonDataset(Dataset):
         return len(self.samples)
 
     def _sample_frames(self, kp: np.ndarray) -> np.ndarray:
-        """Uniformly sample clip_len frames from (M, T, V, C)."""
+        """Uniformly sample clip_len frames — matches pyskl val pipeline."""
         T = kp.shape[1]
         if T == self.clip_len:
             return kp
-        indices = np.linspace(0, T - 1, self.clip_len, dtype=int)
-        return kp[:, indices]
+
+        if T < self.clip_len:
+            # SHORT CLIPS: loop the sequence (pyskl behavior)
+            # NOT linspace which duplicates individual frames
+            inds = np.mod(np.arange(self.clip_len), T)
+        elif T < 2 * self.clip_len:
+            # MEDIUM CLIPS: segment-based with gap insertion
+            np.random.seed(255)
+            # consume the same RNG draws pyskl does before this branch
+            np.random.rand()  # ratio (unused, =1.0)
+            np.random.randint(1)  # off (unused, =0)
+            basic = np.arange(self.clip_len)
+            extra = np.random.choice(
+                self.clip_len + 1, T - self.clip_len, replace=False
+            )
+            offset = np.zeros(self.clip_len + 1, dtype=np.int64)
+            offset[extra] = 1
+            offset = np.cumsum(offset)
+            inds = basic + offset[:-1]
+        else:
+            # LONG CLIPS: segment-based with seeded jitter
+            np.random.seed(255)
+            np.random.rand()
+            np.random.randint(1)
+            bids = np.array([i * T // self.clip_len for i in range(self.clip_len + 1)])
+            bsize = np.diff(bids)
+            bst = bids[: self.clip_len]
+            offset = np.random.randint(bsize)
+            inds = bst + offset
+
+        return kp[:, inds]
 
     def __getitem__(self, idx):
         sample = self.samples[idx]

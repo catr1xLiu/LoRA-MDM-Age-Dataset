@@ -113,10 +113,13 @@ def run_inference():
     )
     print(f"Using device: {DEVICE}")
 
-    # Dataset & DataLoader - use ALL annotations (same as old code)
-    dataset = SkeletonDataset(data_path, clip_len=100, max_person=2, normalize=True)
+    # Dataset & DataLoader - use xsub_val split for proper validation
+    # The checkpoint was trained on NTU60 XSub split
+    dataset = SkeletonDataset(
+        data_path, clip_len=100, max_person=2, normalize=True, split="xsub_val"
+    )
     total_clips = len(dataset)
-    print(f"Running inference on {total_clips} clips (full dataset)")
+    print(f"Running inference on {total_clips} clips (xsub_val split)")
 
     loader = DataLoader(
         dataset,
@@ -127,8 +130,11 @@ def run_inference():
         prefetch_factor=2 if NUM_WORKERS > 0 else None,
     )
 
-    # Model
-    model: STGCNPP = STGCNPP(pretrained="checkpoints/stgcnpp_ntu120_3dkp_joint.pth")
+    # Model - use correct checkpoint for NTU120 XSub
+    # Note: NTU120 has 120 classes
+    model: STGCNPP = STGCNPP(
+        num_classes=120, pretrained="checkpoints/stgcnpp_ntu120_xsub_3dkp_j.pth"
+    )
     model = model.to(DEVICE)
     model.eval()
     model.freeze_backbone()
