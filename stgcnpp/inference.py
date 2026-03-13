@@ -113,12 +113,10 @@ def run_inference():
     )
     print(f"Using device: {DEVICE}")
 
-    # Dataset & DataLoader - use full xsub_val split
-    dataset = SkeletonDataset(
-        data_path, clip_len=100, max_person=2, normalize=True, split="xsub_val"
-    )
+    # Dataset & DataLoader - use ALL annotations (same as old code)
+    dataset = SkeletonDataset(data_path, clip_len=100, max_person=2, normalize=True)
     total_clips = len(dataset)
-    print(f"Running inference on {total_clips} clips (full xsub_val set)")
+    print(f"Running inference on {total_clips} clips (full dataset)")
 
     loader = DataLoader(
         dataset,
