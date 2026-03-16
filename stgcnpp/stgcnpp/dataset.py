@@ -27,15 +27,18 @@ Reference: PYSKL pyskl/datasets/pipelines/pose_related.py
 """
 
 import pickle
+
 import numpy as np
 import torch
-from torch.utils.data import Dataset, DataLoader
-
+from scipy.spatial import distance
+from scipy.spatial.transform import Rotation
+from torch.utils.data import DataLoader, Dataset
 
 # ---------------------------------------------------------------------------
 # Skeleton joint pairs for computing bone (edge-vector) features
 # NTU RGB+D: bone[v1] = joint[v1] - joint[v2]
 # ---------------------------------------------------------------------------
+# fmt: off
 _NTU_BONE_PAIRS = (
     (0,  1),  (1, 20),  (2, 20),  (3,  2),
     (4, 20),  (5,  4),  (6,  5),  (7,  6),
@@ -45,6 +48,7 @@ _NTU_BONE_PAIRS = (
     (21, 22), (20, 20), (22,  7), (23, 24),
     (24, 11),
 )
+# fmt: on
 
 # Seed used during test-time sampling (matches PYSKL default)
 _TEST_SEED = 255
@@ -54,26 +58,20 @@ _TEST_SEED = 255
 # Preprocessing transforms
 # ---------------------------------------------------------------------------
 
+
+def _normalize(vector: np.ndarray, tol: float = 1e-6) -> tuple[np.ndarray, float]:
+    norm: float = float(np.linalg.norm(vector))
+    if norm < tol:
+        return np.zeros_like(vector), 0.0
+    return vector / norm, norm
+
+
 def _rotation_matrix(axis: np.ndarray, theta: float) -> np.ndarray:
-    """Rodrigues' rotation formula.
-
-    Returns the 3×3 rotation matrix for a counter-clockwise rotation of
-    ``theta`` radians around ``axis``.
-    """
-    if np.abs(axis).sum() < 1e-6 or abs(theta) < 1e-6:
+    norm_ax, magnitude = _normalize(axis)
+    if magnitude == 0.0 or abs(theta) < 1e-6:
         return np.eye(3, dtype=np.float32)
-
-    axis = axis / np.sqrt(np.dot(axis, axis))
-    a = np.cos(theta / 2.0)
-    b, c, d = -axis * np.sin(theta / 2.0)
-    aa, bb, cc, dd = a*a, b*b, c*c, d*d
-    bc, ad, ac, ab, bd, cd = b*c, a*d, a*c, a*b, b*d, c*d
-
-    return np.array([
-        [aa + bb - cc - dd, 2*(bc + ad),       2*(bd - ac)      ],
-        [2*(bc - ad),       aa + cc - bb - dd, 2*(cd + ab)      ],
-        [2*(bd + ac),       2*(cd - ab),       aa + dd - bb - cc],
-    ], dtype=np.float32)
+    rotation = Rotation.from_rotvec(norm_ax * theta)
+    return rotation.as_matrix().astype(np.float32)
 
 
 def _angle_between(v1: np.ndarray, v2: np.ndarray) -> float:
@@ -134,34 +132,34 @@ def pre_normalize_3d(keypoint: np.ndarray) -> np.ndarray:
 
     # --- Step 2: center translation ---
     # Reference: spine joint (index 1) of person 0 at the first valid frame
-    center = keypoint[0, 0, 1].copy()   # shape (3,)
+    center = keypoint[0, 0, 1].copy()  # shape (3,)
 
     # A mask of shape (M, T', V, 1) that is 1 for non-zero frames
     non_zero_mask = (keypoint != 0).any(axis=-1, keepdims=True)  # (M, T', V, 1)
     keypoint = (keypoint - center) * non_zero_mask
 
     # --- Step 3: spine alignment along +Z (zaxis = [joint_0, joint_1]) ---
-    joint_bottom = keypoint[0, 0, 0].copy()   # hip center
-    joint_top    = keypoint[0, 0, 1].copy()   # spine
+    joint_bottom = keypoint[0, 0, 0].copy()  # hip center
+    joint_top = keypoint[0, 0, 1].copy()  # spine
 
     spine_vec = joint_top - joint_bottom
-    z_axis    = np.array([0, 0, 1], dtype=np.float32)
-    rot_axis  = np.cross(spine_vec, z_axis)
-    angle_z   = _angle_between(spine_vec, z_axis)
-    R_z       = _rotation_matrix(rot_axis, angle_z)
+    z_axis = np.array([0, 0, 1], dtype=np.float32)
+    rot_axis = np.cross(spine_vec, z_axis)
+    angle_z = _angle_between(spine_vec, z_axis)
+    R_z = _rotation_matrix(rot_axis, angle_z)
 
     # Apply rotation: (M, T', V, 3) @ (3, 3)^T using einsum
     keypoint = np.einsum("mtvd,kd->mtvk", keypoint, R_z)
 
     # --- Step 4: shoulder alignment along +X (xaxis = [joint_8, joint_4]) ---
-    joint_r_shoulder = keypoint[0, 0, 8].copy()   # right shoulder
-    joint_l_shoulder = keypoint[0, 0, 4].copy()   # left shoulder
+    joint_r_shoulder = keypoint[0, 0, 8].copy()  # right shoulder
+    joint_l_shoulder = keypoint[0, 0, 4].copy()  # left shoulder
 
     shoulder_vec = joint_r_shoulder - joint_l_shoulder
-    x_axis       = np.array([1, 0, 0], dtype=np.float32)
-    rot_axis_x   = np.cross(shoulder_vec, x_axis)
-    angle_x      = _angle_between(shoulder_vec, x_axis)
-    R_x          = _rotation_matrix(rot_axis_x, angle_x)
+    x_axis = np.array([1, 0, 0], dtype=np.float32)
+    rot_axis_x = np.cross(shoulder_vec, x_axis)
+    angle_x = _angle_between(shoulder_vec, x_axis)
+    R_x = _rotation_matrix(rot_axis_x, angle_x)
 
     keypoint = np.einsum("mtvd,kd->mtvk", keypoint, R_x)
 
@@ -250,6 +248,7 @@ def uniform_sample_frames(
 # Dataset
 # ---------------------------------------------------------------------------
 
+
 class NTUDataset(Dataset):
     """NTU RGB+D skeleton dataset for ST-GCN++ inference and evaluation.
 
@@ -278,8 +277,9 @@ class NTUDataset(Dataset):
         num_person: int = 2,
         max_samples: int | None = None,
     ) -> None:
-        assert modality in ("joint", "bone"), \
+        assert modality in ("joint", "bone"), (
             f"modality must be 'joint' or 'bone', got '{modality}'"
+        )
 
         self.modality = modality
         self.clip_len = clip_len
@@ -295,8 +295,7 @@ class NTUDataset(Dataset):
 
         # Filter to the requested split
         self.samples = [
-            ann_by_id[sid] for sid in data["split"][split]
-            if sid in ann_by_id
+            ann_by_id[sid] for sid in data["split"][split] if sid in ann_by_id
         ]
 
         if len(self.samples) == 0:
@@ -318,13 +317,13 @@ class NTUDataset(Dataset):
                         e.g. (10, 2, 100, 25, 3)
         """
         ann = self.samples[idx]
-        keypoint = ann["keypoint"].astype(np.float32)   # (M, T, 25, 3)
-        label    = int(ann["label"])
+        keypoint = ann["keypoint"].astype(np.float32)  # (M, T, 25, 3)
+        label = int(ann["label"])
         total_frames = ann["total_frames"]
 
         # --- Step 1: 3-D normalisation ---
         keypoint = pre_normalize_3d(keypoint)
-        total_frames = keypoint.shape[1]   # may shrink after stripping zero frames
+        total_frames = keypoint.shape[1]  # may shrink after stripping zero frames
 
         # --- Step 2: modality features ---
         if self.modality == "bone":
@@ -339,7 +338,7 @@ class NTUDataset(Dataset):
         )
 
         # --- Step 4: pose decode (index keypoints by frame_inds) ---
-        keypoint = keypoint[:, frame_inds, :, :]   # (M, num_clips*clip_len, 25, 3)
+        keypoint = keypoint[:, frame_inds, :, :]  # (M, num_clips*clip_len, 25, 3)
 
         # --- Step 5: format for GCN input ---
         keypoint = self._format_gcn_input(keypoint)
@@ -362,16 +361,14 @@ class NTUDataset(Dataset):
             )
             keypoint = np.concatenate([keypoint, pad], axis=0)
         elif M_actual > self.num_person:
-            keypoint = keypoint[:self.num_person]
+            keypoint = keypoint[: self.num_person]
 
-        M, T_total, V, C = keypoint.shape   # T_total = num_clips * clip_len
+        M, T_total, V, C = keypoint.shape  # T_total = num_clips * clip_len
 
         # Reshape to (M, num_clips, clip_len, V, C) then transpose to
         # (num_clips, M, clip_len, V, C) to match the model's expected layout.
-        keypoint = (
-            keypoint
-            .reshape(M, self.num_clips, self.clip_len, V, C)
-            .transpose(1, 0, 2, 3, 4)
+        keypoint = keypoint.reshape(M, self.num_clips, self.clip_len, V, C).transpose(
+            1, 0, 2, 3, 4
         )
         return np.ascontiguousarray(keypoint)
 
@@ -379,6 +376,7 @@ class NTUDataset(Dataset):
 # ---------------------------------------------------------------------------
 # DataLoader factory
 # ---------------------------------------------------------------------------
+
 
 def build_dataloader(
     pkl_path: str,
