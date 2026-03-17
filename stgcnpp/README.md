@@ -7,18 +7,24 @@ This project is a faithful reimplementation of the model described in:
 > Haodong Duan, Jiaqi Wang, Kai Chen, Dahua Lin — ACM MM 2022
 > https://arxiv.org/abs/2205.09443
 
-The original PYSKL codebase depends on the OpenMMLab ecosystem (mmcv, mmaction2) which is no longer actively maintained and is difficult to run in modern environments.  This project eliminates all such dependencies — only **PyTorch**, **NumPy**, **SciPy**, and **tqdm** are required.
+The original PYSKL codebase depends on the OpenMMLab ecosystem (mmcv, mmaction2) which is no longer actively maintained and is difficult to run in modern environments. This project eliminates all such dependencies — only **PyTorch**, **NumPy**, **SciPy**, and **tqdm** are required.
 
 ---
 
 ## Results
 
-Expected Top-1 accuracy on NTU RGB+D 120 (X-Subject split, official 3-D skeletons):
+### NTU RGB+D 120 (X-Subject split, official 3-D skeletons)
 
 | Modality | Top-1 |
 |----------|-------|
 | Joint    | 83.2% |
 | Bone     | 85.6% |
+
+### Van Criekinge Age Classification
+
+When fine-tuned on the Van Criekinge gait dataset for 3-class age classification (Young <40, Adult 40-64, Elderly ≥65):
+- Validation accuracy: ~48% (baseline random = 33%)
+- Used as feature extractor for LoRA-MDM age-conditioned motion generation
 
 ---
 
@@ -31,9 +37,18 @@ stgcnpp/
 │   ├── graph.py         NTU skeleton graph construction (adjacency matrix)
 │   ├── model.py         Backbone (STGCNBackbone) + head (GCNClassifier)
 │   └── dataset.py       Dataset, all preprocessing transforms, DataLoader
-├── infer.py             Inference / evaluation script
-├── data/                Place ntu120_3danno.pkl here
-├── checkpoints/         Place j.pth and b.pth here
+├── inference.py         Single-clip inference with visualization
+├── batch_inference.py   Batch evaluation script
+├── import_from_smpl.py  SMPL → NTU-25 conversion (with CUDA acceleration)
+├── train_vc.py          Fine-tune for 3-class age classification
+├── extract_z_age.py     Extract 32-dim bottleneck embeddings
+├── data/
+│   ├── ntu120_3danno.pkl   Original NTU dataset
+│   └── vc_ntu25.pkl        Van Criekinge dataset in NTU-25 format
+├── checkpoints/
+│   ├── j.pth            Joint modality pretrained (NTU-120)
+│   ├── b.pth            Bone modality pretrained (NTU-120)
+│   └── vc_age_best.pth  Fine-tuned age classifier
 └── pyproject.toml       uv / Python 3.14 project definition
 ```
 
@@ -61,7 +76,7 @@ Ten stacked `STGCNBlock` layers, each consisting of:
    - Internal GCN residual (`with_res=True`)
 
 2. **MSTCN** — multi-scale temporal convolution
-   Six parallel branches: `(3,d=1)  (3,d=2)  (3,d=3)  (3,d=4)  MaxPool  1×1`
+   Six parallel branches: `(3,d=1) (3,d=2) (3,d=3) (3,d=4) MaxPool 1×1`
    Outputs are concatenated and fused by a BN→ReLU→1×1 transform.
 
 3. **Outer residual** — identity or `UnitTCN(k=1)` when dimensions change.
@@ -113,17 +128,46 @@ The test pipeline applied to each sample:
 
 The DataLoader uses `num_workers=4` parallel workers for pre-processing.
 
-### Inference (`infer.py`)
+---
 
-Multi-clip score aggregation (`'prob'` mode):
+## Van Criekinge Integration
 
+### Purpose
+
+Convert SMPL-fitted Van Criekinge gait data to NTU-25 format for:
+1. Fine-tuning ST-GCN++ as an age classifier (3 classes: Young/Adult/Elderly)
+2. Extracting `z_age` embeddings (32-dim bottleneck) for LoRA-MDM conditioning
+
+### SMPL to NTU-25 Conversion
+
+**Critical**: Uses **mesh vertices** (surface points), not SMPL **joints** (internal skeletal points).
+
+The mapping uses `NTU_25_MARKERS` from `explore_smpl_vertices.py` which maps NTU joint indices to SMPL vertex IDs:
+
+```python
+NTU_25_MARKERS = {
+    0: 1807,  # SpineBase
+    1: 3511,  # SpineMid
+    2: 3069,  # Neck
+    # ... (25 joints total)
+}
 ```
-logits (B×NC, 120)
-  → reshape (B, NC, 120)
-  → softmax per clip
-  → mean across 10 clips
-  → argmax → predicted class
+
+This ensures correct anatomical positioning for skeleton-based models.
+
+### Conversion Script
+
+```bash
+# Run with conda environment (requires smplx with chumpy)
+conda run -n mdm-data-pipeline python import_from_smpl.py
 ```
+
+**Features**:
+- CUDA-accelerated vertex generation (batch processing)
+- GPU tensor operations for vertex indexing
+- Subject-level train/val split (80/20) to prevent data leakage
+
+**Output**: `data/vc_ntu25.pkl` — PYSKL-format dataset with 588 clips across 138 subjects
 
 ---
 
@@ -134,6 +178,11 @@ Install Python 3.14 and [uv](https://github.com/astral-sh/uv), then:
 ```bash
 cd stgcnpp
 uv sync
+```
+
+For SMPL conversion (requires smplx with chumpy):
+```bash
+conda activate mdm-data-pipeline
 ```
 
 ---
@@ -166,31 +215,39 @@ wget -P data        https://download.openmmlab.com/mmaction/pyskl/data/nturgbd/n
 
 ---
 
-## Running inference
+## Running Inference
+
+### NTU Dataset
 
 ```bash
 # Joint model — X-Subject validation split
-uv run python infer.py \
+uv run python inference.py \
     --data       data/ntu120_3danno.pkl \
     --checkpoint checkpoints/j.pth \
     --modality   joint \
     --split      xsub_val
 
 # Bone model
-uv run python infer.py \
+uv run python inference.py \
     --data       data/ntu120_3danno.pkl \
     --checkpoint checkpoints/b.pth \
     --modality   bone \
     --split      xsub_val
-
-# Adjust batch size / workers to fit your GPU memory
-uv run python infer.py \
-    --checkpoint checkpoints/j.pth \
-    --batch-size 32 \
-    --num-workers 8
 ```
 
-All CLI options:
+### Van Criekinge Dataset
+
+```bash
+# Test on VC data with pretrained model (should predict walking)
+uv run python inference.py \
+    --data       data/vc_ntu25.pkl \
+    --checkpoint checkpoints/j.pth \
+    --modality   joint \
+    --split      val \
+    --clip       0
+```
+
+### CLI Options
 
 | Flag | Default | Description |
 |------|---------|-------------|
@@ -206,6 +263,40 @@ All CLI options:
 
 ---
 
+## Fine-tuning for Age Classification
+
+### Training
+
+```bash
+conda run -n mdm-data-pipeline python train_vc.py \
+    --checkpoint checkpoints/b.pth \
+    --epochs 50 \
+    --batch-size 16
+```
+
+**Configuration**:
+- Load pretrained bone model (`b.pth`)
+- Freeze STGCNBackbone entirely
+- Replace head: `Linear(256 → 3)` for Young/Adult/Elderly
+- Optimizer: AdamW, lr=1e-3 (head only)
+- Save best checkpoint to `checkpoints/vc_age_best.pth`
+
+### Extracting z_age Embeddings
+
+```bash
+conda run -n mdm-data-pipeline python extract_z_age.py \
+    --checkpoint checkpoints/vc_age_best.pth \
+    --data data/vc_ntu25.pkl
+```
+
+**Output**: `data/z_age_embeddings.npz` with:
+- `clip_ids`: list of sample IDs
+- `z_age`: (N, 32) bottleneck embeddings
+- `labels`: (N,) age group labels
+- `ages`: (N,) actual ages
+
+---
+
 ## Troubleshooting
 
 **Accuracy is significantly below ~83%**
@@ -214,8 +305,18 @@ The most common causes:
 - Using the wrong split (train vs. val)
 - Checkpoint key mismatch — check the WARN lines printed during loading; there should be zero missing keys
 
+**Joint 24 (or any joint) stuck in visualization**
+- Ensure `import_from_smpl.py` uses vertex mapping (not joint mapping)
+- Run with CUDA for correct tensor operations
+
 **CUDA out of memory**
 Reduce `--batch-size`. With an 8 GB GPU and the default settings, peak VRAM usage is approximately 3–4 GB.
 
 **Slow data loading**
 Increase `--num-workers` up to the number of CPU cores.
+
+**smplx/chumpy import error**
+Use conda environment with required dependencies:
+```bash
+conda activate mdm-data-pipeline
+```
