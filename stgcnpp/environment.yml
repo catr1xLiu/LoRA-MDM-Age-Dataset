@@ -11,6 +11,7 @@ dependencies:
   - wget
   - numpy>=1.24
   - tqdm>=4.65
+  - chumpy
   - pip:
       - --index-url https://download.pytorch.org/whl/cu128
       - --extra-index-url https://pypi.org/simple
@@ -21,3 +22,4 @@ dependencies:
       - ipython>=8.38.0
       - ipynb>=0.5.1
       - matplotlib
+      - smplx
