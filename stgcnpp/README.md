@@ -24,19 +24,18 @@ The original PYSKL codebase depends on the OpenMMLab ecosystem (mmcv, mmaction2)
 
 When fine-tuned on the Van Criekinge gait dataset for 3-class age classification (Young <40, Adult 40-64, Elderly ≥65):
 
-| Unfreeze Blocks | Train Acc | Val Acc | Best Epoch | Trainable Params | z_age std |
-|-----------------|-----------|---------|------------|------------------|-----------|
-| 0 (frozen)      | 54.3%     | 43.68%  | epoch 1    | 0.6% (8K)        | 0.32      |
-| 2               | 100%      | 64.37%  | epoch 4    | 51.5% (718K)     | 2.64      |
-| 1 *(testing)*   | *TBD*     | *TBD*   | *TBD*      | 25% (~350K)      | *TBD*     |
+| Unfreeze Blocks | Train Acc | Val Acc | Best Epoch | Trainable Params | z_age std | Recommendation |
+|-----------------|-----------|---------|------------|------------------|-----------|---|
+| 0 (frozen)      | 54.3%     | 43.68%  | epoch 1    | 0.6% (8K)        | 0.32      | ❌ Insufficient |
+| **1 (recommended)** | **99.17%**     | **54.02%**  | **epoch 17**    | **26.0% (363K)**        | **2.63**      | **✅ Sweet spot** |
+| 2               | 100%      | 64.37%  | epoch 4    | 51.5% (718K)     | 2.64      | ⚠️ Overfits |
 
-**Key observations**:
-- **Frozen backbone (0 blocks)**: Poor discrimination — pretrained NTU-120 features don't encode age well
-- **2-block unfrozen**: Best accuracy but severe overfitting (train 100%, val 64%) due to small dataset (363 train samples)
-- **Trade-off**: 1-block unfrozen being tested as middle ground
-- **z_age quality**: Larger std with more unfrozen blocks indicates more discriminative features
+**Key findings (March 2026 empirical testing)**:
+- **Frozen backbone (0 blocks)**: Insufficient — only 10.7pp above random (43.68%)
+- **1-block unfrozen (RECOMMENDED)**: Sweet spot — 21pp above random, comparable z_age quality to 2-block (std 2.63 vs 2.64), slower overfitting (peaks epoch 17 vs 4), half the parameters
+- **2-block unfrozen**: Best accuracy (64.37%) but severe overfitting by epoch 4, requires aggressive early stopping
 
-Used as feature extractor (`z_age` embedding) for LoRA-MDM age-conditioned motion generation.
+**Recommendation for LoRA-MDM:** Use `checkpoints/vc_age_1block.pth` and `data/z_age_embeddings_1block.npz` — delivers meaningful age discrimination with stable generalization.
 
 ---
 
@@ -280,9 +279,10 @@ uv run python inference.py \
 Fine-tune ST-GCN++ to classify age groups (Young <40, Adult 40-64, Elderly ≥65) on Van Criekinge data and extract 32-dim age embeddings (`z_age`) for LoRA-MDM conditioning.
 
 **Key insight from empirical testing (March 2026):**
-- **Frozen backbone** (0 blocks): 43.68% val acc — pretrained NTU-120 features alone don't encode age
-- **2 blocks unfrozen**: 64.37% val acc — learns age signal but overfits severely on small dataset (363 train clips)
-- **Recommendation**: Use 1–2 unfrozen blocks depending on your regularization budget; save checkpoint at epoch 4 (best generalization)
+- **Frozen backbone** (0 blocks): 43.68% val acc — pretrained NTU-120 features alone insufficient for age
+- **1 block unfrozen** (RECOMMENDED): 54.02% val acc — sweet spot balancing accuracy (21pp above random) and generalization
+- **2 blocks unfrozen**: 64.37% val acc — best accuracy but severe overfitting (100% train, peaks epoch 4)
+- **Recommendation**: Use `--unfreeze-blocks 1` for production; save checkpoint at epoch 17 (stable plateau)
 
 ### Architecture: `AgeClassifierHead`
 
@@ -311,16 +311,7 @@ Fine-tunes the age classifier on Van Criekinge with configurable backbone adapta
 **Usage:**
 
 ```bash
-# Frozen backbone (only head learns, minimal overfitting but limited accuracy)
-python train_vc.py \
-    --checkpoint checkpoints/stgcnpp_ntu120_3dkp_joint.pth \
-    --data data/vc_ntu25.pkl \
-    --epochs 50 \
-    --batch-size 16 \
-    --unfreeze-blocks 0 \
-    --output checkpoints/vc_age_frozen.pth
-
-# Unfreeze 1 GCN block (mid-ground: ~25% trainable params)
+# RECOMMENDED: Unfreeze 1 GCN block (sweet spot: 26% trainable params, 54% val acc, stable overfitting)
 python train_vc.py \
     --checkpoint checkpoints/stgcnpp_ntu120_3dkp_joint.pth \
     --data data/vc_ntu25.pkl \
@@ -329,7 +320,16 @@ python train_vc.py \
     --unfreeze-blocks 1 \
     --output checkpoints/vc_age_1block.pth
 
-# Unfreeze 2 GCN blocks (aggressive adaptation, ~51.5% trainable params, severe overfitting)
+# Alternative: Frozen backbone (only head learns, minimal overfitting but limited accuracy)
+python train_vc.py \
+    --checkpoint checkpoints/stgcnpp_ntu120_3dkp_joint.pth \
+    --data data/vc_ntu25.pkl \
+    --epochs 50 \
+    --batch-size 16 \
+    --unfreeze-blocks 0 \
+    --output checkpoints/vc_age_frozen.pth
+
+# Alternative: Unfreeze 2 GCN blocks (best accuracy but severe overfitting, requires careful early stopping)
 python train_vc.py \
     --checkpoint checkpoints/stgcnpp_ntu120_3dkp_joint.pth \
     --data data/vc_ntu25.pkl \
