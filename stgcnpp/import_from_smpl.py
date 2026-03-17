@@ -12,6 +12,7 @@ Output:
 
 import pickle
 import random
+import re
 from pathlib import Path
 
 import numpy as np
@@ -157,10 +158,19 @@ def load_smpl_params(npz_path: Path) -> dict:
 
 
 def smpl_to_ntu25(params: dict, model: smplx.SMPL) -> np.ndarray:
-    """Convert SMPL parameters to NTU-25 joint positions using vertices."""
-    vertices = get_smpl_vertices(
-        model, params["poses"], params["trans"], params["betas"]
-    )
+    """Convert SMPL parameters to NTU-25 joint positions using vertices.
+
+    Trims FRAME_TRIM frames from the start and end to remove instrumental error.
+    """
+    poses = params["poses"]
+    trans = params["trans"]
+
+    # Trim noisy boundary frames
+    if poses.shape[0] > 2 * FRAME_TRIM:
+        poses = poses[FRAME_TRIM:-FRAME_TRIM]
+        trans = trans[FRAME_TRIM:-FRAME_TRIM]
+
+    vertices = get_smpl_vertices(model, poses, trans, params["betas"])
     ntu_joints = extract_ntu_joints_from_vertices(vertices)
     return ntu_joints
 
@@ -175,16 +185,48 @@ def get_age_group(age: int) -> int:
         return 2
 
 
-def collect_clips(fitted_dir: Path) -> list[dict]:
-    """Collect all SMPL-fitted clips from the directory."""
+FRAME_TRIM = 5  # frames to trim from start and end (instrumental error)
+
+
+_TRIAL_RE = re.compile(r"^SUBJ\d+_(\d+)_smpl_params$")
+
+
+def get_trial_number(npz_path: Path) -> int | None:
+    """Extract trial number from filename, e.g. SUBJ92_2_smpl_params.npz -> 2.
+
+    Returns None if the filename does not match the expected pattern.
+    """
+    m = _TRIAL_RE.match(npz_path.stem)
+    return int(m.group(1)) if m else None
+
+
+def collect_clips(fitted_dir: Path) -> tuple[list[dict], int]:
+    """Collect all SMPL-fitted clips from the directory.
+
+    Skips trial 0 (T-pose) for every subject.
+
+    Returns:
+        (clips, n_discarded) where n_discarded counts trial-0 files skipped.
+    """
     clips = []
+    n_discarded = 0
 
     for subject_dir in sorted(fitted_dir.iterdir()):
         if not subject_dir.is_dir():
             continue
-        subject_id = subject_dir.name
 
-        for npz_file in subject_dir.glob("*_smpl_params.npz"):
+        for npz_file in sorted(subject_dir.glob("*_smpl_params.npz")):
+            trial_num = get_trial_number(npz_file)
+
+            if trial_num is None:
+                print(f"  [SKIP] Unrecognised filename: {npz_file.name}")
+                n_discarded += 1
+                continue
+
+            if trial_num == 0:
+                n_discarded += 1
+                continue
+
             try:
                 params = load_smpl_params(npz_file)
                 clips.append(
@@ -201,7 +243,7 @@ def collect_clips(fitted_dir: Path) -> list[dict]:
                 print(f"Warning: Failed to load {npz_file}: {e}")
                 continue
 
-    return clips
+    return clips, n_discarded
 
 
 def create_train_val_split(
@@ -245,8 +287,8 @@ def main():
     print("  Loaded neutral, male, female models")
 
     print("\nCollecting clips...")
-    clips = collect_clips(fitted_dir)
-    print(f"  Found {len(clips)} clips")
+    clips, n_discarded = collect_clips(fitted_dir)
+    print(f"  Found {len(clips)} clips ({n_discarded} trial-0 T-pose clips discarded)")
 
     subject_counts = {}
     age_dist = {0: 0, 1: 0, 2: 0}
