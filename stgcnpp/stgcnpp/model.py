@@ -475,6 +475,77 @@ class GCNClassifier(nn.Module):
 
 
 # ============================================================================
+# Bottleneck classifier head for age classification (z_age extraction)
+# ============================================================================
+
+
+class AgeClassifierHead(nn.Module):
+    """Bottleneck classifier head for 3-class age classification.
+
+    Pool → Dropout → Linear(256→z_dim) → ReLU → Linear(z_dim→num_classes)
+
+    The z_dim-dimensional intermediate representation is the z_age embedding
+    used for LoRA-MDM conditioning.  Use ``get_z()`` to extract it without
+    running the final classification layer.
+
+    Args:
+        in_channels: Feature channels from the backbone (256).
+        z_dim:       Bottleneck / z_age dimensionality. Default: 32.
+        num_classes: Age group classes (3: Young / Adult / Elderly).
+        dropout:     Dropout probability applied before the bottleneck.
+    """
+
+    def __init__(
+        self,
+        in_channels: int = 256,
+        z_dim: int = 32,
+        num_classes: int = 3,
+        dropout: float = 0.3,
+    ) -> None:
+        super().__init__()
+        self.pool = nn.AdaptiveAvgPool2d(1)
+        self.drop = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
+        self.fc_z = nn.Linear(in_channels, z_dim)
+        self.relu = nn.ReLU()
+        self.fc_cls = nn.Linear(z_dim, num_classes)
+
+        nn.init.normal_(self.fc_z.weight, std=0.01)
+        nn.init.zeros_(self.fc_z.bias)
+        nn.init.normal_(self.fc_cls.weight, std=0.01)
+        nn.init.zeros_(self.fc_cls.bias)
+
+    def _pool_and_mean(self, x: torch.Tensor) -> torch.Tensor:
+        """Pool over (T, V) and average over persons → (N, C)."""
+        N, M, C, T, V = x.shape
+        x = self.pool(x.view(N * M, C, T, V)).view(N, M, C)
+        return x.mean(dim=1)  # (N, C)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            x: (N, M, C, T, V) — backbone output
+
+        Returns:
+            (N, num_classes) — raw logits
+        """
+        x = self._pool_and_mean(x)         # (N, 256)
+        z = self.fc_z(self.drop(x))        # (N, z_dim)
+        return self.fc_cls(self.relu(z))   # (N, num_classes)
+
+    def get_z(self, x: torch.Tensor) -> torch.Tensor:
+        """Extract z_age embedding without running the classification layer.
+
+        Args:
+            x: (N, M, C, T, V) — backbone output
+
+        Returns:
+            (N, z_dim) — z_age bottleneck embeddings
+        """
+        x = self._pool_and_mean(x)   # (N, 256)
+        return self.fc_z(self.drop(x))  # (N, z_dim)
+
+
+# ============================================================================
 # Convenience wrapper (backbone + head in one nn.Module)
 # ============================================================================
 
