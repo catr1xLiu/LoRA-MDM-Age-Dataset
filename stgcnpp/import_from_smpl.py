@@ -5,11 +5,13 @@ Uses SMPL mesh VERTICES (not joints) mapped to NTU joints via NTU_25_MARKERS.
 
 Usage:
     python import_from_smpl.py
+    python import_from_smpl.py --source-dir ../data/fitted_smpl_all_3_tuned --output-path data/custom_vc.pkl
 
 Output:
     stgcnpp/data/vc_ntu25.pkl - PYSKL-format pickle with age group labels
 """
 
+import argparse
 import pickle
 import random
 import re
@@ -246,30 +248,85 @@ def collect_clips(fitted_dir: Path) -> tuple[list[dict], int]:
     return clips, n_discarded
 
 
+def extract_subject_number(subject_id: str) -> int:
+    """Extract numeric subject ID from string like 'SUBJ60' -> 60."""
+    match = re.search(r"\d+", subject_id)
+    return int(match.group()) if match else 0
+
+
 def create_train_val_split(
     clips: list[dict], val_ratio: float = 0.2, seed: int = 42
 ) -> tuple[list, list]:
-    """Create subject-level train/val split."""
-    random.seed(seed)
-    subject_ids = sorted(set(c["subject_id"] for c in clips))
-    random.shuffle(subject_ids)
+    """Create strict subject-level train/val split using round-robin.
 
-    n_val = int(len(subject_ids) * val_ratio)
-    val_subjects = set(subject_ids[:n_val])
-    train_subjects = set(subject_ids[n_val:])
+    Subjects are sorted numerically (SUBJ1, SUBJ2, etc.) which preserves
+    rough age ordering (older subjects have lower numbers).
+
+    For every 4 subjects: first 3 go to train, 4th goes to val.
+    This maintains approximately 75% train / 25% val split while ensuring
+    all clips from a subject are in the same split.
+    """
+    # Extract unique subject IDs and sort numerically
+    subject_ids = sorted(
+        set(c["subject_id"] for c in clips), key=extract_subject_number
+    )
+
+    train_subjects = set()
+    val_subjects = set()
+
+    # Round-robin: for every 4 subjects, assign 3 to train, 1 to val
+    # This gives ~75/25 split which is close to the requested 80/20
+    for i, subject_id in enumerate(subject_ids):
+        if (i % 4) == 3:  # Every 4th subject (indices 3, 7, 11, ...)
+            val_subjects.add(subject_id)
+        else:
+            train_subjects.add(subject_id)
 
     train_clips = [c for c in clips if c["subject_id"] in train_subjects]
     val_clips = [c for c in clips if c["subject_id"] in val_subjects]
 
+    # Log the split distribution
+    print(f"  Split distribution:")
+    print(
+        f"    Train subjects: {len(train_subjects)} ({len(train_subjects) / len(subject_ids) * 100:.1f}%)"
+    )
+    print(
+        f"    Val subjects: {len(val_subjects)} ({len(val_subjects) / len(subject_ids) * 100:.1f}%)"
+    )
+
     return train_clips, val_clips
 
 
-def main():
-    script_dir = Path(__file__).parent
+def parse_args() -> argparse.Namespace:
+    script_dir = Path(__file__).resolve().parent
     project_dir = script_dir.parent
-    fitted_dir = project_dir / "data" / "fitted_smpl_all_3_tuned"
+
+    parser = argparse.ArgumentParser(
+        description="Convert SMPL-fitted Van Criekinge data to NTU-25 PYSKL format.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument(
+        "--source-dir",
+        type=Path,
+        default=project_dir / "data" / "fitted_smpl_all_3_tuned",
+        help="Directory containing subject folders with *_smpl_params.npz files.",
+    )
+    parser.add_argument(
+        "--output-path",
+        type=Path,
+        default=script_dir / "data" / "vc_ntu25.pkl",
+        help="Full output path, including the .pkl filename.",
+    )
+    return parser.parse_args()
+
+
+def main():
+    args = parse_args()
+    script_dir = Path(__file__).resolve().parent
+    project_dir = script_dir.parent
+    fitted_dir = args.source_dir.expanduser().resolve()
     smpl_dir = project_dir / "data" / "smpl"
-    output_path = script_dir / "data" / "vc_ntu25.pkl"
+    output_path = args.output_path.expanduser().resolve()
 
     print("=" * 60)
     print("SMPL Vertices to NTU-25 Conversion")
