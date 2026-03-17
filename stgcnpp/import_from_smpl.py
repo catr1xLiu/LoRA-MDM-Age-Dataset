@@ -15,41 +15,46 @@ import random
 from pathlib import Path
 
 import numpy as np
-import torch
 import smplx
+import torch
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
 
+# fmt: off
 # NTU joint index to SMPL vertex ID mapping from explore_smpl_vertices.py
+# Note: Original uses 1-based keys (for display), converted to 0-based (for array indexing)
 # NTU_25_MARKERS[joint_index] = smpl_vertex_id
+# Fig. 1: 25 body joints - (1) base of spine, (2) middle of spine, (3) neck, (4) head,
+#         (5-8) left arm, (9-12) right arm, (13-16) left leg, (17-20) right leg,
+#         (21) spine, (22) tip of left hand, (23) left thumb, (24) tip of right hand, (25) right thumb
 NTU_25_MARKERS = {
-    0: 1807,  # SpineBase
-    1: 3511,  # SpineMid
-    2: 3069,  # Neck
-    3: 336,  # Head
-    4: 1291,  # LeftShoulder
-    5: 1573,  # LeftElbow
-    6: 1923,  # LeftWrist
-    7: 2226,  # LeftHand
-    8: 4773,  # RightShoulder
-    9: 5044,  # RightElbow
-    10: 5385,  # RightWrist
-    11: 5688,  # RightHand
-    12: 1801,  # HipLeft
-    13: 1046,  # LeftKnee
-    14: 3321,  # LeftAnkle
-    15: 3366,  # LeftFoot
-    16: 5263,  # HipRight
-    17: 4530,  # RightKnee
-    18: 6721,  # RightAnkle
-    19: 6766,  # RightFoot
-    20: 3495,  # Spine1
-    21: 2297,  # Spine2
-    22: 5758,  # Thorax
-    23: 2710,  # Nose
-    24: 6170,  # RightEye
+    # Spine and head (indices 0-3)
+    0: 1807,  # (1) SpineBase - base of spine
+    1: 3511,  # (2) SpineMid - middle of spine
+    2: 3069,  # (3) Neck
+    3: 336,   # (4) Head
+
+    # Left arm (indices 4-8): shoulder, elbow, wrist, hand
+    4: 1291, 5: 1573, 6: 1923, 7: 2226,  # (5) LeftShoulder, (6) LeftElbow, (7) LeftWrist, (8) LeftHand
+
+    # Right arm (indices 9-12): shoulder, elbow, wrist, hand
+    8: 4773, 9: 5044, 10: 5385, 11: 5688,  # (9) RightShoulder, (10) RightElbow, (11) RightWrist, (12) RightHand
+
+    # Left leg (indices 13-16): hip, knee, ankle, foot
+    12: 1801, 13: 1046, 14: 3321, 15: 3366,  # (13) HipLeft, (14) LeftKnee, (15) LeftAnkle, (16) LeftFoot
+
+    # Right leg (indices 17-20): hip, knee, ankle, foot
+    16: 5263, 17: 4530, 18: 6721, 19: 6766,  # (17) HipRight, (18) RightKnee, (19) RightAnkle, (20) RightFoot
+
+    # Additional joints (indices 21-24): spine, hand tips, thumbs
+    20: 3495,  # (21) Spine - spine
+    21: 2297,  # (22) Spine2 - tip of left hand
+    22: 2710,  # (23) Spine3 - left thumb
+    23: 5758,  # (24) Thorax - tip of right hand
+    24: 6170,  # (25) RightEye - right thumb
 }
+# fmt: on
 
 NTU_JOINT_COUNT = 25
 
