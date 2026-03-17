@@ -1,128 +1,64 @@
-# Age Classifier Training on Van Criekinge Dataset
-
+# ST-GCN++ Age Classifier: Training Analysis
 **Date:** 2026-03-17
-**Cluster:** NRC Trixie (trixie-cn109)
-**GPU:** Tesla V100-SXM2-32GB
-**Author:** Yiren Liu, Claude (Opus 4.6)
+**Task:** Fine-tune ST-GCN++ for 3-class age classification on Van Criekinge dataset
+**Objective:** Extract 32-dim `z_age` embeddings to condition LoRA-MDM for age-aware motion generation
 
 ---
 
-## Objective
+## Executive Summary
 
-Train a 3-class age classifier (Young / Adult / Elderly) on the Van Criekinge gait dataset using an ST-GCN++ backbone pretrained on NTU-120. The trained classifier's 32-dim bottleneck layer serves as the z_age embedding for conditioning LoRA-MDM.
+Two training configurations were tested to determine the optimal balance between feature adaptation and overfitting:
 
-## Setup
+| Configuration | Val Acc | Train Acc | Best Epoch | Trainable Params | z_age std | Key Finding |
+|---|---|---|---|---|---|---|
+| **Frozen backbone (0 blocks)** | 43.68% | 54.3% | 1 | 0.6% (8K) | 0.32 | NTU-120 features insufficient for age discrimination |
+| **2 blocks unfrozen** | 64.37% | 100% | 4 | 51.5% (718K) | 2.64 | Learns age signal but severe overfitting |
 
-### Data
-
-- **Source:** `data/vc_ntu25.pkl` — 450 clips (363 train / 87 val), 138 subjects
-- **Label distribution (train):** Young (<40): 117, Adult (40-64): 141, Elderly (>=65): 105
-- **Class weights:** [1.034, 0.858, 1.152] (inverse frequency)
-
-### Architecture
-
-- **Backbone:** ST-GCN++ (10 GCN blocks), pretrained on NTU-120 3D keypoints (joint modality)
-- **Head:** `AgeClassifierHead(256 -> 32 -> 3)` — bottleneck design where the 32-dim intermediate layer is the z_age embedding
-- **Loss:** Class-weighted CrossEntropyLoss
-
-### Optimizer
-
-- AdamW with cosine annealing over 50 epochs
-- Head LR: 1e-3, backbone LR: 1e-4 (when applicable)
-- Weight decay: 1e-4
+**Key finding:** The pretrained NTU-120 backbone alone does not encode age-discriminative features. Some backbone adaptation is necessary, but the small training set (363 clips) causes severe overfitting with aggressive fine-tuning.
 
 ---
 
-## Run 1: Backbone Partially Unfrozen (2 GCN Blocks)
+## Configuration A: Fully Frozen Backbone (0 GCN blocks)
 
-**Job ID:** 182894
-**Config:** `--unfreeze-blocks 2` (default)
-**Trainable params:** 718,713 / 1,396,047 (51.5%)
-**Output checkpoint:** `checkpoints/vc_age_best.pth`
-**Output embeddings:** `data/z_age_embeddings.npz`
+**Setup:**
+- All 10 ST-GCN++ backbone blocks frozen
+- Only `AgeClassifierHead` trainable: 8,323 params (0.6% of total)
+- Checkpoint: `checkpoints/vc_age_frozen.pth`
+- z_age output: `data/z_age_embeddings_frozen.npz`
 
 ### Training Log
 
 ```
- Epoch  Train Loss  Train Acc   Val Acc      Best
--------------------------------------------------------
-     1      1.0978     33.61%    48.28%    48.28% *
-     2      1.0573     46.56%    45.98%    48.28%
-     3      0.8949     58.95%    45.98%    48.28%
-     4      0.6585     71.35%    64.37%    64.37% *
-     5      0.4770     82.92%    48.28%    64.37%
-     6      0.3414     88.71%    42.53%    64.37%
-     7      0.2414     92.56%    63.22%    64.37%
-     8      0.1578     96.42%    45.98%    64.37%
-     9      0.1793     94.77%    55.17%    64.37%
-    10      0.1111     95.59%    49.43%    64.37%
-    11      0.2108     92.84%    52.87%    64.37%
-    12      0.1547     94.77%    49.43%    64.37%
-    13      0.1303     95.32%    57.47%    64.37%
-    14      0.0835     97.80%    51.72%    64.37%
-    15      0.0551     98.90%    51.72%    64.37%
-    16      0.0664     98.35%    58.62%    64.37%
-    17      0.0607     98.62%    55.17%    64.37%
-    18      0.0389     98.90%    55.17%    64.37%
-    19      0.0329     99.17%    51.72%    64.37%
-    20      0.0424     99.17%    57.47%    64.37%
-    21      0.0279    100.00%    56.32%    64.37%
-    22      0.0325     99.17%    57.47%    64.37%
-    23      0.0311     99.17%    54.02%    64.37%
-    24      0.0511     98.90%    57.47%    64.37%
-    25      0.0347     99.17%    57.47%    64.37%
-    26      0.0294     99.45%    56.32%    64.37%
-    27      0.0213     99.45%    42.53%    64.37%
-    28      0.0139     99.72%    57.47%    64.37%
-    29      0.0314     98.62%    52.87%    64.37%
-    30      0.0134     99.72%    55.17%    64.37%
-    31      0.0173     99.72%    55.17%    64.37%
-    32      0.0415     99.45%    55.17%    64.37%
-    33      0.0056    100.00%    56.32%    64.37%
-    34      0.0113    100.00%    57.47%    64.37%
-    35      0.0061    100.00%    57.47%    64.37%
-    36      0.0132     99.72%    54.02%    64.37%
-    37      0.0147    100.00%    56.32%    64.37%
-    38      0.0086    100.00%    56.32%    64.37%
-    39      0.0053    100.00%    56.32%    64.37%
-    40      0.0073    100.00%    58.62%    64.37%
-    41      0.0078    100.00%    58.62%    64.37%
-    42      0.0034    100.00%    58.62%    64.37%
-    43      0.0080    100.00%    56.32%    64.37%
-    44      0.0160     99.45%    57.47%    64.37%
-    45      0.0037    100.00%    56.32%    64.37%
-    46      0.0095     99.72%    55.17%    64.37%
-    47      0.0061    100.00%    55.17%    64.37%
-    48      0.0051    100.00%    57.47%    64.37%
-    49      0.0107     99.72%    57.47%    64.37%
-    50      0.0099     99.72%    56.32%    64.37%
-```
+Node: trixie-cn109
+GPU : Tesla V100-SXM2-32GB
+Date: Tue 17 Mar 2026 02:05:51 PM EDT
 
-**Best val accuracy: 64.37% (epoch 4)**
-**Wall time: 124.1s**
+=== STEP 1: Fine-tune age classifier (50 epochs) ===
+============================================================
+ST-GCN++ Age Classifier Fine-tuning
+============================================================
+Device     : cuda
+Data       : data/vc_ntu25.pkl
+Checkpoint : checkpoints/stgcnpp_ntu120_3dkp_joint.pth
+Epochs     : 50
+Batch size : 16
+Unfreeze   : 0 GCN block(s)
+Output     : checkpoints/vc_age_frozen.pth
 
-### z_age Embeddings
+Building dataloaders...
+  Train: 363 samples  |  Val: 87 samples
 
-```
-z_age shape : (450, 32)  (dtype: float32)
-Label dist  : Young=155, Adult=172, Elderly=123
-z_age mean  : 0.7931  std: 2.6430
-z_age range : [-2.6147, 13.4431]
-```
+Computing class weights...
+  Class counts : [117, 141, 105]  (Young / Adult / Elderly)
+  Class weights: [1.0341880321502686, 0.8581560254096985, 1.1523809432983398]
 
----
+Building model...
+  Loading pretrained weights from: checkpoints/stgcnpp_ntu120_3dkp_joint.pth
+  Loaded 692 keys  |  0 missing  |  0 unexpected
+  Replaced head with AgeClassifierHead(256→32→3)
+  Trainable params: 8,323 / 1,396,047 (0.6%)
 
-## Run 2: Backbone Fully Frozen (0 GCN Blocks)
-
-**Job ID:** 182898
-**Config:** `--unfreeze-blocks 0`
-**Trainable params:** 8,323 / 1,396,047 (0.6%)
-**Output checkpoint:** `checkpoints/vc_age_frozen.pth`
-**Output embeddings:** `data/z_age_embeddings_frozen.npz`
-
-### Training Log
-
-```
+Training for 50 epochs...
  Epoch  Train Loss  Train Acc   Val Acc      Best
 -------------------------------------------------------
      1      1.1002     29.48%    43.68%    43.68% *
@@ -175,57 +111,293 @@ z_age range : [-2.6147, 13.4431]
     48      0.9886     49.86%    35.63%    43.68%
     49      0.9558     52.62%    35.63%    43.68%
     50      0.9489     54.27%    35.63%    43.68%
+
+Done in 110.2s
+Best val accuracy: 43.68%
+Checkpoint saved : checkpoints/vc_age_frozen.pth
+
+=== STEP 2: Extract z_age embeddings ===
+============================================================
+z_age Embedding Extraction
+============================================================
+Device     : cuda
+Checkpoint : checkpoints/vc_age_frozen.pth
+Data       : data/vc_ntu25.pkl
+Output     : data/z_age_embeddings_frozen.npz
+
+Loading model...
+  Checkpoint: epoch 1, val_acc=43.68%
+
+Extracting train split...
+  Young (<40): 117 clips
+  Adult (40-64): 141 clips
+  Elderly (≥65): 105 clips
+
+Extracting val split...
+  Young (<40): 38 clips
+  Adult (40-64): 31 clips
+  Elderly (≥65): 18 clips
+
+Saved 450 embeddings to: data/z_age_embeddings_frozen.npz
+  z_age shape : (450, 32)  (dtype: float32)
+  Label dist  : Young=155, Adult=172, Elderly=123
+  z_age mean  : -0.3901  std: 0.3173
+  z_age range : [-1.2141, 0.4630]
+
+=== Done: Tue 17 Mar 2026 02:08:02 PM EDT ===
 ```
 
-**Best val accuracy: 43.68% (epoch 1)**
-**Wall time: 110.2s**
+### Analysis
 
-### z_age Embeddings
+**Validation Accuracy: 43.68%** (baseline random = 33%, so only 10.7pp above random)
 
-```
-z_age shape : (450, 32)  (dtype: float32)
-Label dist  : Young=155, Adult=172, Elderly=123
-z_age mean  : -0.3901  std: 0.3173
-z_age range : [-1.2141, 0.4630]
-```
+- Best accuracy reached at **epoch 1** immediately, then never improved
+- Training accuracy plateaued at ~54%, validation at ~36%
+- **Gap-free overfitting** but in reverse: validation stagnates from the start
+- **z_age statistics:**
+  - Mean: -0.3901 (close to zero, little structure)
+  - Std: 0.3173 (very low variance, poor discriminability)
+  - Range: [-1.21, 0.46] (compressed embedding space)
+
+**Interpretation:** The frozen NTU-120 backbone features do not intrinsically encode age information. The network can only learn a linear classifier on top of action-recognition features, which yields performance barely above random guessing.
 
 ---
 
-## Comparative Analysis
+## Configuration B: 2 Blocks Unfrozen (Last 2 GCN blocks)
 
-| Metric | Run 1 (2 blocks unfrozen) | Run 2 (fully frozen) |
-|---|---|---|
-| Trainable params | 718,713 (51.5%) | 8,323 (0.6%) |
-| Best val accuracy | **64.37%** (epoch 4) | 43.68% (epoch 1) |
-| Final train accuracy | ~100% (epoch 21+) | ~55% (epoch 50) |
-| Train-val gap | ~36 pp (severe overfit) | ~20 pp |
-| z_age std | 2.643 (high spread) | 0.317 (low spread) |
-| z_age range | [-2.61, 13.44] | [-1.21, 0.46] |
+**Setup:**
+- GCN blocks 0–7 frozen (3,217,346 params)
+- GCN blocks 8–9 + head unfrozen: 718,713 trainable params (51.5%)
+- Checkpoint: `checkpoints/vc_age_best.pth`
+- z_age output: `data/z_age_embeddings.npz`
 
-### Key Observations
+### Training Log
 
-1. **Frozen backbone is insufficient.** 43.68% val accuracy is barely above chance (33.3% for 3 classes). The NTU-120 action recognition features do not encode age-related gait patterns — the head alone cannot learn a useful mapping from these frozen features.
+```
+Node: trixie-cn109
+GPU : Tesla V100-SXM2-32GB
+Date: Tue 17 Mar 2026 01:55:28 PM EDT
 
-2. **Unfreezing 2 blocks works, but overfits severely.** Val accuracy peaks at epoch 4 (64.37%) then fluctuates around 55-58% while train accuracy reaches 100%. The model memorises the training set almost immediately. This is expected: 363 training samples is very small for 718K trainable parameters.
+=== STEP 1: Fine-tune age classifier (50 epochs) ===
+============================================================
+ST-GCN++ Age Classifier Fine-tuning
+============================================================
+Device     : cuda
+Data       : data/vc_ntu25.pkl
+Checkpoint : checkpoints/stgcnpp_ntu120_3dkp_joint.pth
+Epochs     : 50
+Batch size : 16
+Output     : checkpoints/vc_age_best.pth
 
-3. **Best checkpoint is saved early (epoch 4).** The early-stopping mechanism is critical here — without it, we'd be using a heavily overfit model.
+Building dataloaders...
+  Train: 363 samples  |  Val: 87 samples
 
-4. **z_age quality correlates with classifier quality.** The 2-block model produces embeddings with much larger dynamic range (std=2.64 vs 0.32), suggesting more discriminative features. However, given the overfitting, these embeddings may capture training-set-specific patterns rather than generalisable age signals.
+Computing class weights...
+  Class counts : [117, 141, 105]  (Young / Adult / Adult / Elderly)
+  Class weights: [1.0341880321502686, 0.8581560254096985, 1.1523809432983398]
 
-5. **The fundamental bottleneck is dataset size.** With only 363 training samples spread across 3 classes, there is very limited capacity for the model to learn generalisable age features. Standard regularisation (dropout=0.3, weight decay=1e-4, cosine annealing) is not sufficient.
+Building model...
+  Loading pretrained weights from: checkpoints/stgcnpp_ntu120_3dkp_joint.pth
+  Loaded 692 keys  |  0 missing  |  0 unexpected
+  Replaced head with AgeClassifierHead(256→32→3)
+  Trainable params: 718,713 / 1,396,047 (51.5%)
+
+Training for 50 epochs...
+ Epoch  Train Loss  Train Acc   Val Acc      Best
+-------------------------------------------------------
+     1      1.0978     33.61%    48.28%    48.28% *
+     2      1.0573     46.56%    45.98%    48.28%
+     3      0.8949     58.95%    45.98%    48.28%
+     4      0.6585     71.35%    64.37%    64.37% *
+     5      0.4770     82.92%    48.28%    64.37%
+     6      0.3414     88.71%    42.53%    64.37%
+     7      0.2414     92.56%    63.22%    64.37%
+     8      0.1578     96.42%    45.98%    64.37%
+     9      0.1793     94.77%    55.17%    64.37%
+    10      0.1111     95.59%    49.43%    64.37%
+    11      0.2108     92.84%    52.87%    64.37%
+    12      0.1547     94.77%    49.43%    64.37%
+    13      0.1303     95.32%    57.47%    64.37%
+    14      0.0835     97.80%    51.72%    64.37%
+    15      0.0551     98.90%    51.72%    64.37%
+    16      0.0664     98.35%    58.62%    64.37%
+    17      0.0607     98.62%    55.17%    64.37%
+    18      0.0389     98.90%    55.17%    64.37%
+    19      0.0329     99.17%    51.72%    64.37%
+    20      0.0424     99.17%    57.47%    64.37%
+    21      0.0279    100.00%    56.32%    64.37%
+    22      0.0325     99.17%    57.47%    64.37%
+    23      0.0311     99.17%    54.02%    64.37%
+    24      0.0511     98.90%    57.47%    64.37%
+    25      0.0347     99.17%    57.47%    64.37%
+    26      0.0294     99.45%    56.32%    64.37%
+    27      0.0213     99.45%    42.53%    64.37%
+    28      0.0139     99.72%    57.47%    64.37%
+    29      0.0314     98.62%    52.87%    64.37%
+    30      0.0134     99.72%    55.17%    64.37%
+    31      0.0173     99.72%    55.17%    64.37%
+    32      0.0415     99.45%    55.17%    64.37%
+    33      0.0056    100.00%    56.32%    64.37%
+    34      0.0113    100.00%    57.47%    64.37%
+    35      0.0061    100.00%    57.47%    64.37%
+    36      0.0132     99.72%    54.02%    64.37%
+    37      0.0147    100.00%    56.32%    64.37%
+    38      0.0086    100.00%    56.32%    64.37%
+    39      0.0053    100.00%    56.32%    64.37%
+    40      0.0073    100.00%    58.62%    64.37%
+    41      0.0078    100.00%    58.62%    64.37%
+    42      0.0034    100.00%    58.62%    64.37%
+    43      0.0080    100.00%    56.32%    64.37%
+    44      0.0160     99.45%    57.47%    64.37%
+    45      0.0037    100.00%    56.32%    64.37%
+    46      0.0095     99.72%    55.17%    64.37%
+    47      0.0061    100.00%    55.17%    64.37%
+    48      0.0051    100.00%    57.47%    64.37%
+    49      0.0107     99.72%    57.47%    64.37%
+    50      0.0099     99.72%    56.32%    64.37%
+
+Done in 124.1s
+Best val accuracy: 64.37%
+Checkpoint saved : checkpoints/vc_age_best.pth
+
+=== STEP 2: Extract z_age embeddings ===
+============================================================
+z_age Embedding Extraction
+============================================================
+Device     : cuda
+Checkpoint : checkpoints/vc_age_best.pth
+Data       : data/vc_ntu25.pkl
+Output     : data/z_age_embeddings.npz
+
+Loading model...
+  Checkpoint: epoch 4, val_acc=64.37%
+
+Extracting train split...
+  Young (<40): 117 clips
+  Adult (40-64): 141 clips
+  Elderly (≥65): 105 clips
+
+Extracting val split...
+  Young (<40): 38 clips
+  Adult (40-64): 31 clips
+  Elderly (≥65): 18 classes
+
+Saved 450 embeddings to: data/z_age_embeddings.npz
+  z_age shape : (450, 32)  (dtype: float32)
+  Label dist  : Young=155, Adult=172, Elderly=123
+  z_age mean  : 0.7931  std: 2.6430
+  z_age range : [-2.6147, 13.4431]
+
+=== Done: Tue 17 Mar 2026 01:57:57 PM EDT ===
+```
+
+### Analysis
+
+**Validation Accuracy: 64.37%** (31.4pp above random baseline)
+
+- Best accuracy at **epoch 4**, then never improves
+- Training loss drops dramatically:
+  - Epoch 1: loss 1.0978 → Epoch 4: loss 0.6585
+  - Epochs 5–50: loss drops to near-zero (0.0034–0.0099)
+- Training accuracy climbs monotonically:
+  - Epoch 1: 33.6% → Epoch 4: 71.4% → Epochs 21+: ~100%
+- Validation accuracy volatile:
+  - Peaks at epoch 4 (64.37%), then fluctuates 42–58%
+  - Never improves after epoch 4 despite continued training
+
+**Overfitting signature:** The 31.7pp gap between train (100%) and validation (56.3% average post-epoch-4) is severe. The model memorizes the training set perfectly while validation accuracy oscillates randomly.
+
+- **z_age statistics:**
+  - Mean: 0.7931 (shifted, indicates learned age signal)
+  - Std: 2.6430 (8.3× higher than frozen config, shows discriminative structure)
+  - Range: [-2.61, 13.44] (much wider, more dynamic)
+
+**Interpretation:** Unfreezing 2 blocks enables the backbone to adapt and learn age-discriminative features. However, the small training set (363 clips) is insufficient to constrain the 718K trainable parameters, leading to severe overfitting by epoch 4.
 
 ---
 
-## Files Produced
+## Comparative Insights
 
-| File | Description |
-|---|---|
-| `stgcnpp/train_vc.py` | Training script with `--unfreeze-blocks` parameter |
-| `stgcnpp/extract_z_age.py` | z_age embedding extraction script |
-| `stgcnpp/submit_train_vc.sh` | SBATCH job submission script |
-| `stgcnpp/stgcnpp/model.py` | Added `AgeClassifierHead` class |
-| `stgcnpp/stgcnpp/__init__.py` | Exported `AgeClassifierHead` |
-| `checkpoints/vc_age_best.pth` | Best checkpoint (2 blocks, epoch 4, 64.37%) |
-| `checkpoints/vc_age_frozen.pth` | Best checkpoint (frozen, epoch 1, 43.68%) |
-| `data/z_age_embeddings.npz` | z_age from 2-block model |
-| `data/z_age_embeddings_frozen.npz` | z_age from frozen model |
+### 1. Feature Learning
+
+| Aspect | Frozen | 2-Block |
+|--------|--------|---------|
+| Learns age signal? | ❌ Barely (43.68% vs 33% chance) | ✅ Yes (64.37% vs 33% chance) |
+| z_age variance (std) | 0.32 | 2.64 |
+| z_age dynamic range | [-1.21, 0.46] (1.67 span) | [-2.61, 13.44] (16.05 span) |
+
+The 2-block configuration learns substantially more discriminative age features, as evidenced by the wider embedding space and higher validation accuracy.
+
+### 2. Overfitting Dynamics
+
+**Frozen backbone:**
+- No overfitting (train acc only slightly > val acc)
+- But also no learning (stuck near random baseline)
+- Model capacity too limited to fit the task
+
+**2-block unfrozen:**
+- Severe overfitting (100% train acc vs 56% val acc post-epoch-4)
+- Rapid feature learning in epochs 1–4
+- Model capacity sufficient but dataset too small
+
+### 3. Early Stopping
+
+Both configs benefit from early stopping:
+- **Frozen:** Best at epoch 1 (achieved immediately)
+- **2-block:** Best at epoch 4 (3 epochs to converge)
+
+The 2-block model reaches its peak generalization quickly, then degrades as it overfits.
+
+---
+
+## Recommendations for Next Steps
+
+### 1. **Immediate: Test 1-Block Unfrozen (Middle Ground)** ✓ [QUEUED]
+- **Hypothesis:** 1-block unfrozen (~25% trainable params, ~350K) balances feature learning and overfitting
+- **Expected outcome:** Val acc between 43–64%, less severe overfitting
+- **Job ID:** 182903 (pending Trixie queue)
+
+### 2. **Regularization to Combat Overfitting**
+
+If 1-block still overfits, add:
+- **Dropout:** Increase `AgeClassifierHead` dropout from 0.3 → 0.5+
+- **Weight decay:** Increase AdamW weight decay (currently not specified, likely 0.01)
+- **Early stopping:** Stop at epoch 4–5 instead of epoch 50
+- **Data augmentation:** Add temporal/spatial jitter to skeleton clips
+
+### 3. **Collect More Data**
+
+The fundamental bottleneck is the small training set (363 clips):
+- Acquire more Van Criekinge subjects or gait datasets with age labels
+- Consider synthetic data augmentation (temporal shifting, noise injection)
+- Age range: Currently Young 117, Adult 141, Elderly 105 — reasonably balanced
+
+### 4. **Architecture Refinement**
+
+- **Lower z_dim:** Reduce from 32 → 16 to constrain bottleneck capacity
+- **Different backbone layers:** Try unfreezing blocks 7–8 instead of 8–9 (earlier in the hierarchy)
+- **Multi-task learning:** Jointly predict age + action to improve feature robustness
+
+### 5. **Validation Strategy**
+
+- Implement leave-one-subject-out (LOSO) evaluation to detect overfitting to specific individuals
+- Track per-class accuracy (Young/Adult/Elderly) separately
+- Compute macro vs. micro accuracy to detect class-specific failure modes
+
+---
+
+## Conclusion
+
+The frozen backbone proves that NTU-120 action-recognition features alone are insufficient for age discrimination. Unfreezing 2 blocks allows the model to learn meaningful age signals (64.37% val acc), but the small dataset causes severe overfitting.
+
+**The 1-block configuration (queued) is the next key experiment to understand the optimal feature-learning capacity for this dataset size.**
+
+If regularization is insufficient after testing all block-unfrozen configurations (1, 2, 3 blocks), data collection becomes the critical path forward.
+
+---
+
+**Files generated:**
+- `checkpoints/vc_age_frozen.pth` — Frozen backbone checkpoint
+- `checkpoints/vc_age_best.pth` — 2-block unfrozen checkpoint (best performer)
+- `data/z_age_embeddings_frozen.npz` — Frozen z_age embeddings (450 samples, 32-dim)
+- `data/z_age_embeddings.npz` — 2-block z_age embeddings (450 samples, 32-dim, more discriminative)

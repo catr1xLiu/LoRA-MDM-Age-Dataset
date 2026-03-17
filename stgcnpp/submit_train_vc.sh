@@ -26,15 +26,15 @@ python train_vc.py \
     --epochs        50 \
     --batch-size    16 \
     --num-workers   8 \
-    --unfreeze-blocks 0 \
-    --output        checkpoints/vc_age_frozen.pth
+    --unfreeze-blocks 1 \
+    --output        checkpoints/vc_age_1block.pth
 
 echo ""
 echo "=== STEP 2: Extract z_age embeddings ==="
 python extract_z_age.py \
-    --checkpoint checkpoints/vc_age_frozen.pth \
+    --checkpoint checkpoints/vc_age_1block.pth \
     --data       data/vc_ntu25.pkl \
-    --output     data/z_age_embeddings_frozen.npz \
+    --output     data/z_age_embeddings_1block.npz \
     --batch-size 16 \
     --num-workers 8
 
