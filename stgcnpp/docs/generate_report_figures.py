@@ -2,12 +2,13 @@
 Generate figures for Week 10 Report.
 """
 
-import numpy as np
-import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D
-import matplotlib
 import math
+
+import matplotlib
+import matplotlib.pyplot as plt
+import numpy as np
 from cycler import cycler
+from mpl_toolkits.mplot3d import Axes3D
 
 matplotlib.use("Agg")
 
@@ -64,19 +65,17 @@ def generate_figure3_training_curves():
     val_acc_2block = np.clip(val_acc_2block, 40, 64.37)
     train_loss_2block = np.exp(-t / 5) * 1.0 + 0.05
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
+    fig, ax1 = plt.subplots(figsize=(7.0, 4.2))
     ax1.set_facecolor("#fafafa")
-    ax2.set_facecolor("#fafafa")
-
-    # Left: Train loss
     ax1.plot(
         epochs,
         train_loss_frozen,
         "o-",
         color="#1f77b4",
         label="Frozen",
-        markersize=3,
-        alpha=0.8,
+        markersize=4,
+        linewidth=2.2,
+        alpha=0.9,
     )
     ax1.plot(
         epochs,
@@ -84,8 +83,9 @@ def generate_figure3_training_curves():
         "s-",
         color="#ff7f0e",
         label="1-block",
-        markersize=3,
-        alpha=0.8,
+        markersize=4,
+        linewidth=2.2,
+        alpha=0.9,
     )
     ax1.plot(
         epochs,
@@ -93,53 +93,63 @@ def generate_figure3_training_curves():
         "^-",
         color="#2ca02c",
         label="2-block",
-        markersize=3,
-        alpha=0.8,
+        markersize=4,
+        linewidth=2.2,
+        alpha=0.9,
     )
     ax1.set_xlabel("Epoch")
     ax1.set_ylabel("Train Loss")
-    ax1.set_title("Training Loss vs Epoch")
-    ax1.legend()
+    ax1.tick_params(axis="y", colors="#444444")
     ax1.grid(True, alpha=0.3)
+    ax1.set_title(
+        "Training Loss by Backbone Configuration", fontsize=13, fontweight="bold"
+    )
+    ax1.legend(loc="upper right", fontsize=9)
+    plt.tight_layout()
+    plt.savefig("figures/figure3_train_loss.png", dpi=170, bbox_inches="tight")
+    plt.close()
+    print("Generated: figures/figure3_train_loss.png")
 
-    # Right: Val accuracy with best epoch markers
+    fig, ax2 = plt.subplots(figsize=(7.0, 4.2))
+    ax2.set_facecolor("#fafafa")
     ax2.plot(
         epochs,
         val_acc_frozen,
         "o-",
-        color="#1f77b4",
+        color="#4c78a8",
         label="Frozen (43.68% @ epoch 1)",
-        markersize=3,
-        alpha=0.8,
+        markersize=4,
+        linewidth=2.2,
+        alpha=0.9,
     )
     ax2.plot(
         epochs,
         val_acc_1block,
         "s-",
-        color="#ff7f0e",
+        color="#f58518",
         label="1-block (54.02% @ epoch 17)",
-        markersize=3,
-        alpha=0.8,
+        markersize=4,
+        linewidth=2.2,
+        alpha=0.9,
     )
     ax2.plot(
         epochs,
         val_acc_2block,
         "^-",
-        color="#2ca02c",
+        color="#54a24b",
         label="2-block (64.37% @ epoch 4)",
-        markersize=3,
-        alpha=0.8,
+        markersize=4,
+        linewidth=2.2,
+        alpha=0.9,
     )
     ax2.axhline(
         y=33, color="#7f7f7f", linestyle="--", alpha=0.5, label="Random baseline (33%)"
     )
 
-    # Add vertical lines and markers for best epochs
     ax2.axvline(x=1, color="#1f77b4", linestyle=":", alpha=0.6)
     ax2.axvline(x=17, color="#ff7f0e", linestyle=":", alpha=0.6)
     ax2.axvline(x=4, color="#2ca02c", linestyle=":", alpha=0.6)
 
-    # Add scatter points at best epochs
     ax2.scatter(
         [1], [43.68], color="#1f77b4", s=100, zorder=5, edgecolors="white", linewidth=2
     )
@@ -150,7 +160,6 @@ def generate_figure3_training_curves():
         [4], [64.37], color="#2ca02c", s=100, zorder=5, edgecolors="white", linewidth=2
     )
 
-    # Add annotations for best epochs
     ax2.annotate(
         "Best: 43.68%",
         xy=(1, 43.68),
@@ -178,19 +187,21 @@ def generate_figure3_training_curves():
 
     ax2.set_xlabel("Epoch")
     ax2.set_ylabel("Validation Accuracy (%)")
-    ax2.set_title("Validation Accuracy vs Epoch")
-    ax2.legend(loc="upper right", fontsize=8)
-    ax2.grid(True, alpha=0.3)
+    ax2.tick_params(axis="y", colors="#222222")
     ax2.set_ylim([25, 70])
-
+    ax2.grid(True, alpha=0.3)
+    ax2.set_title(
+        "Validation Accuracy by Backbone Configuration", fontsize=13, fontweight="bold"
+    )
+    ax2.legend(loc="upper right", fontsize=8.5)
     plt.tight_layout()
-    plt.savefig("figures/figure3_training_curves.png", dpi=150, bbox_inches="tight")
+    plt.savefig("figures/figure3_val_accuracy.png", dpi=170, bbox_inches="tight")
     plt.close()
-    print("Generated: figures/figure3_training_curves.png")
+    print("Generated: figures/figure3_val_accuracy.png")
 
 
 def generate_figure4_split_comparison():
-    """Figure 4: Comparison of training curves before/after split improvement for 2-block."""
+    """Figure 4: Combined comparison of validation curves before/after split improvement."""
     epochs = np.arange(1, 51)
 
     # Random split (Session 1): peaks at epoch 4 then oscillates wildly 42-58%
@@ -204,37 +215,54 @@ def generate_figure4_split_comparison():
     val_acc_rr = 35 + 29.6 * (1 - np.exp(-np.arange(50) / 20))
     val_acc_rr = np.clip(val_acc_rr + np.random.randint(-3, 3, 50), 35, 65)
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4), sharey=True)
-    ax1.set_facecolor("#fafafa")
-    ax2.set_facecolor("#fafafa")
-
-    # Left: Random split
-    ax1.plot(epochs, val_acc_random, "o-", color="#1f77b4", markersize=3, alpha=0.8)
-    ax1.axvline(x=4, color="#1f77b4", linestyle=":", alpha=0.7, label="Best @ epoch 4")
-    ax1.axhline(y=43.68, color="#7f7f7f", linestyle="--", alpha=0.5)
-    ax1.fill_between(epochs, 42, 58, alpha=0.2, color="#1f77b4")
-    ax1.set_xlabel("Epoch")
-    ax1.set_ylabel("Validation Accuracy (%)")
-    ax1.set_title("Session 1: Random Split\n(val acc oscillates 42-58%)")
-    ax1.legend(loc="upper right")
-    ax1.grid(True, alpha=0.3)
-    ax1.set_ylim([30, 70])
-
-    # Right: Round-robin split
-    ax2.plot(epochs, val_acc_rr, "o-", color="#ff7f0e", markersize=3, alpha=0.8)
-    ax2.axvline(
-        x=30, color="#ff7f0e", linestyle=":", alpha=0.7, label="Best @ epoch 30"
+    fig, ax = plt.subplots(figsize=(7.2, 4.8))
+    ax.set_facecolor("#fafafa")
+    ax.plot(
+        epochs,
+        val_acc_random,
+        "o-",
+        color="#1f77b4",
+        markersize=4,
+        linewidth=2.2,
+        alpha=0.85,
+        label="Session 1 random split",
     )
-    ax2.fill_between(epochs, 57, 65, alpha=0.2, color="#ff7f0e")
-    ax2.set_xlabel("Epoch")
-    ax2.set_title("Session 2: Round-robin Split\n(val acc stable 57-65%)")
-    ax2.legend(loc="lower right")
-    ax2.grid(True, alpha=0.3)
-
+    ax.plot(
+        epochs,
+        val_acc_rr,
+        "s-",
+        color="#ff7f0e",
+        markersize=4,
+        linewidth=2.2,
+        alpha=0.85,
+        label="Session 2 round-robin split",
+    )
+    ax.axvline(x=4, color="#1f77b4", linestyle=":", alpha=0.75)
+    ax.axvline(x=30, color="#ff7f0e", linestyle=":", alpha=0.75)
+    ax.fill_between(epochs, 42, 58, alpha=0.12, color="#1f77b4")
+    ax.fill_between(epochs, 57, 65, alpha=0.10, color="#ff7f0e")
+    ax.annotate(
+        "Best @ epoch 4", xy=(4, 64.37), xytext=(8, 66.2), fontsize=9, color="#1f77b4"
+    )
+    ax.annotate(
+        "Best @ epoch 30", xy=(30, 64.6), xytext=(23, 60.8), fontsize=9, color="#ff7f0e"
+    )
+    ax.set_xlabel("Epoch")
+    ax.set_ylabel("Validation Accuracy (%)")
+    ax.set_title(
+        "2-block Validation Accuracy Before and After Split Improvement",
+        fontsize=13,
+        fontweight="bold",
+    )
+    ax.legend(loc="lower right", fontsize=9)
+    ax.grid(True, alpha=0.3)
+    ax.set_ylim([30, 70])
     plt.tight_layout()
-    plt.savefig("figures/figure4_split_comparison.png", dpi=150, bbox_inches="tight")
+    plt.savefig(
+        "figures/figure4_split_comparison_combined.png", dpi=170, bbox_inches="tight"
+    )
     plt.close()
-    print("Generated: figures/figure4_split_comparison.png")
+    print("Generated: figures/figure4_split_comparison_combined.png")
 
 
 def generate_figure5_confusion_matrices():
@@ -260,62 +288,43 @@ def generate_figure5_confusion_matrices():
 
     class_names = ["Young\n(<40)", "Adult\n(40-64)", "Elderly\n(≥65)"]
 
-    fig, axes = plt.subplots(1, 2, figsize=(11, 4))
+    fig, axes = plt.subplots(1, 2, figsize=(9.2, 4.6))
+    matrices = [
+        (cm_1block, "1-block Model (60.18% val acc)"),
+        (cm_2block, "2-block Model (64.60% val acc)"),
+    ]
 
-    # 1-block heatmap
-    im1 = axes[0].imshow(cm_1block, cmap="RdYlGn", vmin=0, vmax=30)
-    axes[0].set_xticks(range(3))
-    axes[0].set_yticks(range(3))
-    axes[0].set_xticklabels(class_names)
-    axes[0].set_yticklabels(class_names)
-    axes[0].set_xlabel("Predicted")
-    axes[0].set_ylabel("True")
-    axes[0].set_title("1-block Model (60.18% val acc)")
+    for idx, (ax, (cm, title)) in enumerate(zip(axes, matrices)):
+        im = ax.imshow(cm, cmap="RdYlGn", vmin=0, vmax=30)
+        ax.set_xticks(range(3))
+        ax.set_yticks(range(3))
+        ax.set_xticklabels(class_names, fontsize=10)
+        ax.set_yticklabels(class_names, fontsize=10)
+        ax.set_xlabel("Predicted", fontsize=11)
+        if idx == 0:
+            ax.set_ylabel("True", fontsize=11)
+        ax.set_title(title, fontsize=12, fontweight="bold")
 
-    for i in range(3):
-        for j in range(3):
-            color = "white" if cm_1block[i, j] > 15 else "black"
-            axes[0].text(
-                j,
-                i,
-                str(cm_1block[i, j]),
-                ha="center",
-                va="center",
-                color=color,
-                fontsize=12,
-            )
+        for i in range(3):
+            for j in range(3):
+                color = "white" if cm[i, j] > 15 else "black"
+                ax.text(
+                    j,
+                    i,
+                    str(cm[i, j]),
+                    ha="center",
+                    va="center",
+                    color=color,
+                    fontsize=30,
+                    fontweight="bold",
+                )
 
-    # 2-block heatmap
-    im2 = axes[1].imshow(cm_2block, cmap="RdYlGn", vmin=0, vmax=30)
-    axes[1].set_xticks(range(3))
-    axes[1].set_yticks(range(3))
-    axes[1].set_xticklabels(class_names)
-    axes[1].set_yticklabels(class_names)
-    axes[1].set_xlabel("Predicted")
-    axes[1].set_ylabel("True")
-    axes[1].set_title("2-block Model (64.60% val acc)")
-
-    for i in range(3):
-        for j in range(3):
-            color = "white" if cm_2block[i, j] > 15 else "black"
-            axes[1].text(
-                j,
-                i,
-                str(cm_2block[i, j]),
-                ha="center",
-                va="center",
-                color=color,
-                fontsize=12,
-            )
-
-    # Add colorbar with manual positioning to avoid overlap
-    cbar_ax = fig.add_axes([0.92, 0.15, 0.02, 0.7])
-    fig.colorbar(im2, cax=cbar_ax, label="Count")
-
-    plt.subplots_adjust(left=0.05, right=0.90, wspace=0.35)
-    plt.savefig("figures/figure5_confusion_matrices.png", dpi=150, bbox_inches="tight")
+    plt.tight_layout()
+    plt.savefig(
+        "figures/figure5_confusion_matrix_combined.png", dpi=170, bbox_inches="tight"
+    )
     plt.close()
-    print("Generated: figures/figure5_confusion_matrices.png")
+    print("Generated: figures/figure5_confusion_matrix_combined.png")
 
 
 def generate_figure6_pca_visualization():
@@ -356,86 +365,55 @@ def generate_figure6_pca_visualization():
     z_2block_pca = simple_pca(z_2block, 3)
 
     colors = ["#1f77b4", "#2ca02c", "#d62728"]  # Blue, Green, Red
-    labels = ["Young (<40)", "Adult (40-64)", "Elderly (≥65)"]
 
-    fig = plt.figure(figsize=(14, 4))
+    def save_pca_panel(data, title, out_path, show_legend=False):
+        fig = plt.figure(figsize=(5.0, 4.6))
+        ax = fig.add_subplot(111, projection="3d")
+        for i, (start, count, label) in enumerate(
+            [
+                (0, n_young, "Young"),
+                (n_young, n_adult, "Adult"),
+                (n_young + n_adult, n_elderly, "Elderly"),
+            ]
+        ):
+            ax.scatter(
+                data[start : start + count, 0],
+                data[start : start + count, 1],
+                data[start : start + count, 2],
+                c=colors[i],
+                label=label,
+                alpha=0.62,
+                s=24,
+            )
+        ax.set_xlabel("PC1")
+        ax.set_ylabel("PC2")
+        ax.set_zlabel("PC3")
+        ax.set_title(title, fontsize=12, fontweight="bold")
+        if show_legend:
+            ax.legend(loc="upper left", fontsize=9)
+        plt.tight_layout()
+        plt.savefig(out_path, dpi=170, bbox_inches="tight")
+        plt.close()
+        print(f"Generated: {out_path}")
 
-    # Frozen config
-    ax1 = fig.add_subplot(131, projection="3d")
-    for i, (start, count, label) in enumerate(
-        [
-            (0, n_young, "Young"),
-            (n_young, n_adult, "Adult"),
-            (n_young + n_adult, n_elderly, "Elderly"),
-        ]
-    ):
-        ax1.scatter(
-            z_frozen_pca[start : start + count, 0],
-            z_frozen_pca[start : start + count, 1],
-            z_frozen_pca[start : start + count, 2],
-            c=colors[i],
-            label=label,
-            alpha=0.6,
-            s=20,
-        )
-    ax1.set_xlabel("PC1")
-    ax1.set_ylabel("PC2")
-    ax1.set_zlabel("PC3")
-    ax1.set_title("Frozen (std: 0.32)\nCollapsed cluster")
-    ax1.legend(loc="upper left", fontsize=8)
-
-    # 1-block config
-    ax2 = fig.add_subplot(132, projection="3d")
-    for i, (start, count, label) in enumerate(
-        [
-            (0, n_young, "Young"),
-            (n_young, n_adult, "Adult"),
-            (n_young + n_adult, n_elderly, "Elderly"),
-        ]
-    ):
-        ax2.scatter(
-            z_1block_pca[start : start + count, 0],
-            z_1block_pca[start : start + count, 1],
-            z_1block_pca[start : start + count, 2],
-            c=colors[i],
-            label=label,
-            alpha=0.6,
-            s=20,
-        )
-    ax2.set_xlabel("PC1")
-    ax2.set_ylabel("PC2")
-    ax2.set_zlabel("PC3")
-    ax2.set_title("1-block (std: 2.63)\nSome separation, Adult overlap")
-    ax2.legend(loc="upper left", fontsize=8)
-
-    # 2-block config
-    ax3 = fig.add_subplot(133, projection="3d")
-    for i, (start, count, label) in enumerate(
-        [
-            (0, n_young, "Young"),
-            (n_young, n_adult, "Adult"),
-            (n_young + n_adult, n_elderly, "Elderly"),
-        ]
-    ):
-        ax3.scatter(
-            z_2block_pca[start : start + count, 0],
-            z_2block_pca[start : start + count, 1],
-            z_2block_pca[start : start + count, 2],
-            c=colors[i],
-            label=label,
-            alpha=0.6,
-            s=20,
-        )
-    ax3.set_xlabel("PC1")
-    ax3.set_ylabel("PC2")
-    ax3.set_zlabel("PC3")
-    ax3.set_title("2-block (std: 2.64)\nBimodal polarisation")
-    ax3.legend(loc="upper left", fontsize=8)
-
-    plt.tight_layout()
-    plt.savefig("figures/figure6_pca_visualization.png", dpi=150, bbox_inches="tight")
-    plt.close()
-    print("Generated: figures/figure6_pca_visualization.png")
+    save_pca_panel(
+        z_1block_pca,
+        "1-block (std: 2.63)\nSome separation, Adult overlap",
+        "figures/figure6_pca_1block.png",
+        show_legend=True,
+    )
+    save_pca_panel(
+        z_2block_pca,
+        "2-block (std: 2.64)\nBimodal polarisation",
+        "figures/figure6_pca_2block.png",
+        show_legend=False,
+    )
+    save_pca_panel(
+        z_frozen_pca,
+        "Frozen (std: 0.32)\nCollapsed cluster",
+        "figures/figure6_pca_frozen.png",
+        show_legend=False,
+    )
 
 
 def generate_pie_chart_age_distribution():
@@ -446,35 +424,136 @@ def generate_pie_chart_age_distribution():
         "Elderly (≥65)\n123 clips (27.3%)",
     ]
     sizes = [155, 172, 123]
-    colors = ["#1f77b4", "#2ca02c", "#d62728"]
+    # Use the classic ggplot palette for a cleaner result.
+    colors = ["#E24A33", "#348ABD", "#988ED5"]
     explode = (0.02, 0.02, 0.02)
 
-    fig, ax = plt.subplots(figsize=(8, 6))
-    wedges, texts, autotexts = ax.pie(
-        sizes,
-        explode=explode,
-        labels=labels,
-        colors=colors,
-        autopct="%1.1f%%",
-        startangle=90,
-        textprops={"fontsize": 11},
-    )
+    with plt.style.context("ggplot"):
+        fig, ax = plt.subplots(figsize=(7.2, 5.4))
+        wedges, texts, autotexts = ax.pie(
+            sizes,
+            explode=explode,
+            labels=labels,
+            colors=colors,
+            autopct="%1.1f%%",
+            startangle=90,
+            textprops={"fontsize": 13, "color": "#333333"},
+            wedgeprops={"linewidth": 1.0, "edgecolor": "white"},
+        )
 
-    for autotext in autotexts:
-        autotext.set_color("white")
-        autotext.set_fontweight("bold")
+        for autotext in autotexts:
+            autotext.set_color("white")
+            autotext.set_fontweight("bold")
 
-    ax.axis("equal")
-    plt.title(
-        "Van Criekinge Dataset: Age Distribution\n(450 clips, 138 subjects after cleaning)",
-        fontsize=14,
-        fontweight="bold",
-    )
+        ax.axis("equal")
+        plt.title(
+            "Van Criekinge Dataset: Age Distribution\n(450 clips, 138 subjects after cleaning)",
+            fontsize=15,
+            fontweight="bold",
+        )
 
-    plt.tight_layout()
-    plt.savefig("figures/figure_age_distribution_pie.png", dpi=150, bbox_inches="tight")
-    plt.close()
+        plt.tight_layout()
+        plt.savefig(
+            "figures/figure_age_distribution_pie.png", dpi=150, bbox_inches="tight"
+        )
+        plt.close()
     print("Generated: figures/figure_age_distribution_pie.png")
+
+
+def generate_top20_action_pie_chart():
+    """Pie chart for the top-20 recognised NTU action labels."""
+    # Values recovered from the original chart image and the report table.
+    labels = [
+        "58 (walking towards)",
+        "59 (walking apart)",
+        "115 (follow)",
+        "48 (fan self)",
+        "98 (run on the spot)",
+        "31 (taking a selfie)",
+        "65 (juggle table tennis ball)",
+        "41 (staggering)",
+        "76 (snap fingers)",
+        "91 (move heavy objects)",
+        "25 (hopping)",
+        "23 (kicking something)",
+        "29 (type on keyboard)",
+        "21 (cheer up)",
+        "9 (clapping)",
+        "13 (put on jacket)",
+        "68 (thumb up)",
+        "10 (reading)",
+        "27 (phone call)",
+        "92 (shake fist)",
+    ]
+    sizes = [
+        255.3,
+        32.1,
+        21.3,
+        1.8,
+        1.6,
+        1.5,
+        1.3,
+        0.8,
+        0.6,
+        0.6,
+        0.5,
+        0.5,
+        0.4,
+        0.2,
+        0.1,
+        0.1,
+        0.1,
+        0.1,
+        0.1,
+        0.1,
+    ]
+    colors = ["#27AE60", "#58D68D", "#A9DFBF"] + ["#3498DB"] * 17
+    explode = [0.03, 0.025, 0.02] + [0.0] * 17
+
+    def autopct_fmt(pct):
+        return f"{pct:.1f}%" if pct >= 3.0 else ""
+
+    with plt.style.context("ggplot"):
+        fig, ax = plt.subplots(figsize=(7.2, 5.4))
+        wedges, _, autotexts = ax.pie(
+            sizes,
+            colors=colors,
+            explode=explode,
+            startangle=100,
+            autopct=autopct_fmt,
+            pctdistance=0.72,
+            textprops={"fontsize": 11, "color": "#333333"},
+            wedgeprops={"linewidth": 0.9, "edgecolor": "white"},
+        )
+
+        for autotext in autotexts:
+            autotext.set_color("white")
+            autotext.set_fontweight("bold")
+
+        legend_labels = [
+            f"{label} - {value:.1f}" for label, value in zip(labels, sizes)
+        ]
+        ax.legend(
+            wedges,
+            legend_labels,
+            title="NTU Action Label",
+            loc="center left",
+            bbox_to_anchor=(1.0, 0.5),
+            fontsize=9.5,
+            title_fontsize=10.5,
+            frameon=True,
+        )
+        ax.axis("equal")
+        plt.title(
+            "Top 20 Most Recognized NTU Action Labels\n(Van Criekinge Gait Dataset)",
+            fontsize=14,
+            fontweight="bold",
+        )
+        plt.tight_layout()
+        plt.savefig("figures/vc_top20_barchart.png", dpi=150, bbox_inches="tight")
+        plt.close()
+
+    print("Generated: figures/vc_top20_barchart.png")
 
 
 if __name__ == "__main__":
@@ -484,10 +563,15 @@ if __name__ == "__main__":
     generate_figure5_confusion_matrices()
     generate_figure6_pca_visualization()
     generate_pie_chart_age_distribution()
+    generate_top20_action_pie_chart()
     print("\nAll figures generated successfully!")
     print("Generated files:")
-    print("  - figures/figure3_training_curves.png")
-    print("  - figures/figure4_split_comparison.png")
-    print("  - figures/figure5_confusion_matrices.png")
-    print("  - figures/figure6_pca_visualization.png")
+    print("  - figures/figure3_train_loss.png")
+    print("  - figures/figure3_val_accuracy.png")
+    print("  - figures/figure4_split_comparison_combined.png")
+    print("  - figures/figure5_confusion_matrix_combined.png")
+    print("  - figures/figure6_pca_1block.png")
+    print("  - figures/figure6_pca_2block.png")
+    print("  - figures/figure6_pca_frozen.png")
     print("  - figures/figure_age_distribution_pie.png")
+    print("  - figures/vc_top20_barchart.png")
