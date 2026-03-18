@@ -161,64 +161,43 @@ python train_vc.py --checkpoint checkpoints/j.pth --data data/vc_ntu25_xsub.pkl
 
 ---
 
-## Recommendations for Next Steps
+## Next Steps
 
-### 1. Extract z_age Embeddings from New Checkpoints
+### 1. Validate That the Split Improvement Is Real
 
-Both new checkpoints need embedding extraction before they can be used in LoRA-MDM:
+**Goal:** Determine whether the 1-block gain (54.02% → 60.18%) came from round-robin stratification or simply from a larger val set (87 → 113 samples).
 
-```bash
-python extract_z_age.py \
-    --checkpoint checkpoints/vc_age_unfreeze2block_newsplit.pth \
-    --data data/vc_ntu25_xsub.pkl \
-    --output data/z_age_embeddings_2block_xsub.npz
+**Method:** Modify `import_from_smpl.py` to use a random subject-level split at `val_ratio=0.25` (matching the new ~25% fraction). The subject-level constraint stays — no subject appears in both train and val — but subjects are assigned randomly rather than by round-robin. Regenerate the dataset and retrain 1-block and 2-block.
 
-python extract_z_age.py \
-    --checkpoint checkpoints/vc_age_unfreeze1block_newsplit.pth \
-    --data data/vc_ntu25_xsub.pkl \
-    --output data/z_age_embeddings_1block_xsub.npz
+- If random-at-25% ≈ 60%, the gain was from set size alone
+- If random-at-25% ≈ 54%, the gain was from stratification (round-robin is genuinely better)
+
+This is the highest-priority experiment because it determines whether the current split is a real improvement or noise.
+
+### 2. Regularisation — Dropout Sweep
+
+Two sequential sub-experiments, run in order:
+
+**2a. Increase head dropout**
+Raise `AgeClassifierHead` dropout from 0.3 → 0.5 in `train_vc.py`. Retrain 1-block and 2-block. Target: push 1-block best epoch later than epoch 5 while holding ≥60% val accuracy.
+
+**2b. Add dropout to the unfrozen GCN block(s)**
+The `MSTCN` inside each `STGCNBlock` already has a `self.drop` slot (currently `Dropout(0.0)`). After unfreezing, override it in `train_vc.py`:
+
+```python
+for block in model.backbone.gcn[-unfreeze_blocks:]:
+    block.tcn.drop = nn.Dropout(p=0.3, inplace=True)
 ```
 
-Compare z_age std of the new embeddings vs. old (target: ≥ 2.6).
+No `model.py` changes needed. Run after 2a so the two changes don't compound. This applies only to whichever unfreeze configuration looks most promising after 2a.
 
-### 2. Validate the Split Improvement is Real (Not Just Set-Size Effect)
+### 3. LR Reduction from Epoch 10
 
-The 1-block jump (54 → 60%) could come from either the round-robin stratification or the larger val set. To isolate:
+Both the 1-block (already at ~60% val by epoch 5) and 2-block (already at ~60% by epoch 9) converge most of their validation signal early. A flat LR thereafter encourages overfitting.
 
-- Re-run old random split with `val_ratio=0.25` (same 113 val samples, random subjects)
-- If that also reaches ~60%, the gain was from set size; if it stays ~54%, the gain was stratification
+**Method:** Add `torch.optim.lr_scheduler.ReduceLROnPlateau` with `patience=5, factor=0.5` starting from training epoch 1, or switch to a cosine schedule that decays from epoch 10 onward. Both approaches reduce the LR once the validation plateau is reached, allowing finer parameter updates without driving train loss to zero.
 
-This single experiment resolves a key confound in the current results.
-
-### 3. Add Regularisation to the 1-Block Config
-
-The 1-block best epoch is only 5, leaving 55 epochs of overfitting. To widen the generalisation window:
-
-- **Increase dropout:** `AgeClassifierHead` dropout 0.3 → 0.5
-- **Weight decay:** Explicitly set AdamW `weight_decay=0.05` (test vs. current)
-- **Cosine LR schedule:** Replace flat LR with cosine annealing — often delays the overfitting cliff
-
-Target: push 1-block best epoch back to ≥15 while maintaining ≥60% val accuracy.
-
-### 4. Investigate the 2-Block Post-Peak Plateau
-
-The 2-block plateau (57–65%) is higher and more stable, but still doesn't improve after epoch 30. Two approaches:
-
-- **Reduce LR at epoch 30**: use `ReduceLROnPlateau` with patience=5 — may coax a further improvement
-- **Fine-tune from epoch-30 checkpoint with lower LR** (e.g., 1e-5 instead of 1e-4)
-
-### 5. Per-Class Accuracy Tracking
-
-Current logs only report macro accuracy. Add per-class breakdowns:
-- Elderly (91 train) is the smallest and hardest class — it likely drives most misclassifications
-- Knowing whether Adult↔Elderly confusion drives errors vs. Young↔Adult would guide where to focus data collection
-
-### 6. Leave-One-Subject-Out (LOSO) Evaluation
-
-The round-robin split is better but still assigns subjects to fixed splits. LOSO gives a true unbiased estimate: train on all-but-one subject, test on the held-out one. Given ~30 subjects, this is feasible and would:
-- Eliminate train/val split as a confound
-- Reveal per-subject difficulty (some subjects may be clear outliers)
-- Provide the number to report in any publication
+Apply to both 1-block and 2-block after the dropout experiments (step 2), so effects are interpretable in isolation.
 
 ---
 
