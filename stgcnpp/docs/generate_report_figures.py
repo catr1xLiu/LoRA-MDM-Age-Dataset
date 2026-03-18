@@ -7,11 +7,31 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 import matplotlib
 import math
+from cycler import cycler
 
 matplotlib.use("Agg")
 
 plt.rcParams["font.family"] = "DejaVu Sans"
 plt.rcParams["font.size"] = 10
+plt.rcParams["axes.facecolor"] = "#f5f5f5"
+plt.rcParams["axes.edgecolor"] = "#cccccc"
+plt.rcParams["axes.grid"] = True
+plt.rcParams["grid.color"] = "#dddddd"
+plt.rcParams["grid.linestyle"] = "--"
+plt.rcParams["axes.prop_cycle"] = cycler(
+    color=[
+        "#1f77b4",
+        "#ff7f0e",
+        "#2ca02c",
+        "#d62728",
+        "#9467bd",
+        "#8c564b",
+        "#e377c2",
+        "#7f7f7f",
+        "#bcbd22",
+        "#17becf",
+    ]
+)
 
 
 def simple_pca(X, n_components=3):
@@ -45,13 +65,15 @@ def generate_figure3_training_curves():
     train_loss_2block = np.exp(-t / 5) * 1.0 + 0.05
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
+    ax1.set_facecolor("#fafafa")
+    ax2.set_facecolor("#fafafa")
 
     # Left: Train loss
     ax1.plot(
         epochs,
         train_loss_frozen,
         "o-",
-        color="#ff7f0e",
+        color="#1f77b4",
         label="Frozen",
         markersize=3,
         alpha=0.8,
@@ -60,7 +82,7 @@ def generate_figure3_training_curves():
         epochs,
         train_loss_1block,
         "s-",
-        color="#1f77b4",
+        color="#ff7f0e",
         label="1-block",
         markersize=3,
         alpha=0.8,
@@ -80,13 +102,13 @@ def generate_figure3_training_curves():
     ax1.legend()
     ax1.grid(True, alpha=0.3)
 
-    # Right: Val accuracy
+    # Right: Val accuracy with best epoch markers
     ax2.plot(
         epochs,
         val_acc_frozen,
         "o-",
-        color="#ff7f0e",
-        label="Frozen (43.68%)",
+        color="#1f77b4",
+        label="Frozen (43.68% @ epoch 1)",
         markersize=3,
         alpha=0.8,
     )
@@ -94,7 +116,7 @@ def generate_figure3_training_curves():
         epochs,
         val_acc_1block,
         "s-",
-        color="#1f77b4",
+        color="#ff7f0e",
         label="1-block (54.02% @ epoch 17)",
         markersize=3,
         alpha=0.8,
@@ -109,14 +131,55 @@ def generate_figure3_training_curves():
         alpha=0.8,
     )
     ax2.axhline(
-        y=33, color="gray", linestyle="--", alpha=0.5, label="Random baseline (33%)"
+        y=33, color="#7f7f7f", linestyle="--", alpha=0.5, label="Random baseline (33%)"
     )
-    ax2.axvline(x=17, color="#1f77b4", linestyle=":", alpha=0.5)
-    ax2.axvline(x=4, color="#2ca02c", linestyle=":", alpha=0.5)
+
+    # Add vertical lines and markers for best epochs
+    ax2.axvline(x=1, color="#1f77b4", linestyle=":", alpha=0.6)
+    ax2.axvline(x=17, color="#ff7f0e", linestyle=":", alpha=0.6)
+    ax2.axvline(x=4, color="#2ca02c", linestyle=":", alpha=0.6)
+
+    # Add scatter points at best epochs
+    ax2.scatter(
+        [1], [43.68], color="#1f77b4", s=100, zorder=5, edgecolors="white", linewidth=2
+    )
+    ax2.scatter(
+        [17], [54.02], color="#ff7f0e", s=100, zorder=5, edgecolors="white", linewidth=2
+    )
+    ax2.scatter(
+        [4], [64.37], color="#2ca02c", s=100, zorder=5, edgecolors="white", linewidth=2
+    )
+
+    # Add annotations for best epochs
+    ax2.annotate(
+        "Best: 43.68%",
+        xy=(1, 43.68),
+        xytext=(5, 38),
+        fontsize=9,
+        color="#1f77b4",
+        fontweight="bold",
+    )
+    ax2.annotate(
+        "Best: 54.02%",
+        xy=(17, 54.02),
+        xytext=(20, 48),
+        fontsize=9,
+        color="#ff7f0e",
+        fontweight="bold",
+    )
+    ax2.annotate(
+        "Best: 64.37%",
+        xy=(4, 64.37),
+        xytext=(8, 60),
+        fontsize=9,
+        color="#2ca02c",
+        fontweight="bold",
+    )
+
     ax2.set_xlabel("Epoch")
     ax2.set_ylabel("Validation Accuracy (%)")
     ax2.set_title("Validation Accuracy vs Epoch")
-    ax2.legend(loc="upper right")
+    ax2.legend(loc="upper right", fontsize=8)
     ax2.grid(True, alpha=0.3)
     ax2.set_ylim([25, 70])
 
@@ -142,12 +205,14 @@ def generate_figure4_split_comparison():
     val_acc_rr = np.clip(val_acc_rr + np.random.randint(-3, 3, 50), 35, 65)
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4), sharey=True)
+    ax1.set_facecolor("#fafafa")
+    ax2.set_facecolor("#fafafa")
 
     # Left: Random split
-    ax1.plot(epochs, val_acc_random, "o-", color="#d62728", markersize=3, alpha=0.8)
-    ax1.axvline(x=4, color="#d62728", linestyle=":", alpha=0.7, label="Best @ epoch 4")
-    ax1.axhline(y=43.68, color="gray", linestyle="--", alpha=0.5)
-    ax1.fill_between(epochs, 42, 58, alpha=0.2, color="#d62728")
+    ax1.plot(epochs, val_acc_random, "o-", color="#1f77b4", markersize=3, alpha=0.8)
+    ax1.axvline(x=4, color="#1f77b4", linestyle=":", alpha=0.7, label="Best @ epoch 4")
+    ax1.axhline(y=43.68, color="#7f7f7f", linestyle="--", alpha=0.5)
+    ax1.fill_between(epochs, 42, 58, alpha=0.2, color="#1f77b4")
     ax1.set_xlabel("Epoch")
     ax1.set_ylabel("Validation Accuracy (%)")
     ax1.set_title("Session 1: Random Split\n(val acc oscillates 42-58%)")
@@ -156,11 +221,11 @@ def generate_figure4_split_comparison():
     ax1.set_ylim([30, 70])
 
     # Right: Round-robin split
-    ax2.plot(epochs, val_acc_rr, "o-", color="#2ca02c", markersize=3, alpha=0.8)
+    ax2.plot(epochs, val_acc_rr, "o-", color="#ff7f0e", markersize=3, alpha=0.8)
     ax2.axvline(
-        x=30, color="#2ca02c", linestyle=":", alpha=0.7, label="Best @ epoch 30"
+        x=30, color="#ff7f0e", linestyle=":", alpha=0.7, label="Best @ epoch 30"
     )
-    ax2.fill_between(epochs, 57, 65, alpha=0.2, color="#2ca02c")
+    ax2.fill_between(epochs, 57, 65, alpha=0.2, color="#ff7f0e")
     ax2.set_xlabel("Epoch")
     ax2.set_title("Session 2: Round-robin Split\n(val acc stable 57-65%)")
     ax2.legend(loc="lower right")
