@@ -328,60 +328,36 @@ def generate_figure5_confusion_matrices():
 
 
 def generate_figure6_pca_visualization():
-    """Figure 6: 3D PCA visualisation of z_age embeddings."""
+    """Figure 6: 3D PCA visualisation of z_age embeddings (real extracted embeddings)."""
 
-    # Generate synthetic embeddings matching the statistics in the report
-    np.random.seed(42)
+    def load_embeddings(npz_path):
+        d = np.load(npz_path)
+        return d["z_age"], d["labels"]  # (N, 32), (N,) — 0=Young, 1=Adult, 2=Elderly
 
-    n_young = 155
-    n_adult = 172
-    n_elderly = 123
-    total = n_young + n_adult + n_elderly
+    z_1block, labels_1block = load_embeddings(
+        "../data/z_age_embeddings_1block_newsplit.npz"
+    )
+    z_2block, labels_2block = load_embeddings(
+        "../data/z_age_embeddings_2block_newsplit.npz"
+    )
 
-    # Create embeddings with cluster separation based on report stats
-    # Frozen: collapsed cluster (std 0.32)
-    z_frozen = np.random.randn(total, 32) * 0.32
-    z_frozen_mean = np.zeros(32) - 0.39
-    z_frozen = z_frozen + z_frozen_mean
-
-    # 1-block: good separation (std 2.63)
-    # Young concentrated around 2-4, Adult around 0-2, Elderly around -2 to 0
-    z_1block = np.random.randn(total, 32) * 1.5
-    z_1block[:n_young] += np.random.randn(n_young, 32) * 0.5 + 3.0
-    z_1block[n_young : n_young + n_adult] += np.random.randn(n_adult, 32) * 0.8 + 1.0
-    z_1block[n_young + n_adult :] += np.random.randn(n_elderly, 32) * 0.6 - 1.5
-
-    # 2-block: similar separation but more polarized (std 2.64)
-    z_2block = np.random.randn(total, 32) * 1.5
-    z_2block[:n_young] += np.random.randn(n_young, 32) * 0.5 + 3.5
-    z_2block[n_young : n_young + n_adult] += (
-        np.random.randn(n_adult, 32) * 1.0 + 0.0
-    )  # more spread
-    z_2block[n_young + n_adult :] += np.random.randn(n_elderly, 32) * 0.5 - 2.0
-
-    # Apply PCA to get 3 components
-    z_frozen_pca = simple_pca(z_frozen, 3)
     z_1block_pca = simple_pca(z_1block, 3)
     z_2block_pca = simple_pca(z_2block, 3)
 
     colors = ["#1f77b4", "#2ca02c", "#d62728"]  # Blue, Green, Red
+    class_names = ["Young", "Adult", "Elderly"]
 
-    def save_pca_panel(data, title, out_path, show_legend=False):
+    def save_pca_panel(pca_data, labels, title, out_path, show_legend=False):
         fig = plt.figure(figsize=(5.0, 4.6))
         ax = fig.add_subplot(111, projection="3d")
-        for i, (start, count, label) in enumerate(
-            [
-                (0, n_young, "Young"),
-                (n_young, n_adult, "Adult"),
-                (n_young + n_adult, n_elderly, "Elderly"),
-            ]
-        ):
+        for cls_idx, (cls_label, color) in enumerate(zip(class_names, colors)):
+            mask = labels == cls_idx
             ax.scatter(
-                data[start : start + count, 0],
-                data[start : start + count, 1],
-                data[start : start + count, 2],
-                c=colors[i],
-                label=label,
+                pca_data[mask, 0],
+                pca_data[mask, 1],
+                pca_data[mask, 2],
+                c=color,
+                label=f"{cls_label} (n={mask.sum()})",
                 alpha=0.62,
                 s=24,
             )
@@ -398,20 +374,16 @@ def generate_figure6_pca_visualization():
 
     save_pca_panel(
         z_1block_pca,
-        "1-block (std: 2.63)\nSome separation, Adult overlap",
+        labels_1block,
+        f"1-block (std: {z_1block.std():.2f})\nSome separation, Adult overlap",
         "figures/figure6_pca_1block.png",
         show_legend=True,
     )
     save_pca_panel(
         z_2block_pca,
-        "2-block (std: 2.64)\nBimodal polarisation",
+        labels_2block,
+        f"2-block (std: {z_2block.std():.2f})\nBimodal polarisation",
         "figures/figure6_pca_2block.png",
-        show_legend=False,
-    )
-    save_pca_panel(
-        z_frozen_pca,
-        "Frozen (std: 0.32)\nCollapsed cluster",
-        "figures/figure6_pca_frozen.png",
         show_legend=False,
     )
 
@@ -572,6 +544,5 @@ if __name__ == "__main__":
     print("  - figures/figure5_confusion_matrix_combined.png")
     print("  - figures/figure6_pca_1block.png")
     print("  - figures/figure6_pca_2block.png")
-    print("  - figures/figure6_pca_frozen.png")
     print("  - figures/figure_age_distribution_pie.png")
     print("  - figures/vc_top20_barchart.png")

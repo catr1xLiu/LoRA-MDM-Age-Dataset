@@ -1,8 +1,9 @@
 """
 ST-GCN++ single clip inference script with visualization.
 
-Loads a pre-trained checkpoint and runs inference on a single clip from the
-NTU RGB+D dataset, then displays an interactive visualization.
+Loads a checkpoint and runs inference on a single clip from either the NTU
+RGB+D action-recognition dataset or the Van Criekinge age-recognition dataset,
+then displays an interactive visualization.
 
 Usage
 -----
@@ -45,7 +46,7 @@ import torch
 import torch.nn.functional as F
 from matplotlib.widgets import Button, Slider
 
-from stgcnpp import STGCNpp, build_dataloader
+from stgcnpp import AgeClassifierHead, STGCNpp, build_dataloader
 from stgcnpp.dataset import pre_normalize_3d, uniform_sample_frames
 
 # fmt: off
@@ -99,6 +100,12 @@ NTU_ACTION_NAMES = {
     117: "exchange things",     118: "support somebody",    119: "rock-paper-scissors",
 }
 # fmt: on
+
+AGE_GROUP_NAMES = {
+    0: "Young (<40)",
+    1: "Adult (40-64)",
+    2: "Elderly (>=65)",
+}
 
 
 _NTU_BONE_PAIRS = (
@@ -162,16 +169,17 @@ def _remap_key(key: str) -> str | None:
     """Map a PYSKL checkpoint key to our model's key."""
     if key.startswith("backbone."):
         return key
+    if key.startswith("head."):
+        return key
     if key.startswith("cls_head."):
         return "head." + key[len("cls_head.") :]
     return None
 
 
-def load_checkpoint(model: STGCNpp, ckpt_path: str, device: torch.device) -> None:
-    """Load a PYSKL-format checkpoint into our model."""
-    raw = torch.load(ckpt_path, map_location=device, weights_only=False)
-    state_dict = raw.get("state_dict", raw)
-
+def load_checkpoint(
+    model: STGCNpp, state_dict: dict[str, torch.Tensor]
+) -> tuple[list[str], list[str], list[str]]:
+    """Load a checkpoint state dict into our model."""
     remapped: dict[str, torch.Tensor] = {}
     skipped: list[str] = []
 
@@ -183,17 +191,72 @@ def load_checkpoint(model: STGCNpp, ckpt_path: str, device: torch.device) -> Non
             remapped[new_k] = v
 
     missing, unexpected = model.load_state_dict(remapped, strict=False)
+    return missing, unexpected, skipped
 
-    if missing:
-        print(
-            f"  [WARN] Missing keys ({len(missing)}): {missing[:5]}{'...' if len(missing) > 5 else ''}"
+
+def load_checkpoint_raw(ckpt_path: str, device: torch.device) -> tuple[dict, dict[str, torch.Tensor]]:
+    """Load raw checkpoint object and normalized state dict."""
+    raw = torch.load(ckpt_path, map_location=device, weights_only=False)
+    return raw, raw.get("state_dict", raw)
+
+
+def detect_task_from_state_dict(state_dict: dict[str, torch.Tensor]) -> str:
+    """Detect whether the checkpoint is for action or age recognition."""
+    head_keys = {
+        key
+        for key in state_dict
+        if key.startswith("head.") or key.startswith("cls_head.")
+    }
+
+    has_bottleneck = any(key.endswith(".fc_z.weight") for key in head_keys)
+    has_classifier = any(key.endswith(".fc_cls.weight") for key in head_keys)
+
+    if has_bottleneck and has_classifier:
+        return "age"
+    if has_classifier:
+        return "action"
+    raise RuntimeError("Could not detect model type from classifier head layers")
+
+
+def build_model_for_task(task: str) -> STGCNpp:
+    """Instantiate a model matching the checkpoint task."""
+    if task == "age":
+        model = STGCNpp(in_channels=3, num_classes=120)
+        model.head = AgeClassifierHead(
+            in_channels=256, z_dim=32, num_classes=3, dropout=0.3
         )
-    if unexpected:
-        print(
-            f"  [WARN] Unexpected keys ({len(unexpected)}): {unexpected[:5]}{'...' if len(unexpected) > 5 else ''}"
-        )
-    if skipped:
-        print(f"  [INFO] Skipped {len(skipped)} keys not belonging to backbone/head")
+        return model
+    if task == "action":
+        return STGCNpp(in_channels=3, num_classes=120)
+    raise ValueError(f"Unsupported task: {task}")
+
+
+def resolve_age_years(frame_dir: str, ages_root: Path) -> float | None:
+    """Resolve per-clip age in years from HumanML3D age text files."""
+    try:
+        subject_dir, trial_id = frame_dir.split("_", 1)
+    except ValueError:
+        return None
+
+    age_file = ages_root / subject_dir / f"{trial_id}_humanml3d_22joints.txt"
+    if not age_file.exists():
+        return None
+
+    text = age_file.read_text(encoding="utf-8").strip()
+    if not text:
+        return None
+
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+def label_name(task: str, label: int) -> str:
+    """Get a human-readable class name for the current task."""
+    if task == "age":
+        return AGE_GROUP_NAMES.get(label, f"Unknown ({label})")
+    return NTU_ACTION_NAMES.get(label, f"Unknown ({label})")
 
 
 def load_annotation(pkl_path: str) -> dict:
@@ -354,6 +417,7 @@ def bar3d_colored(ax, grid, cmap):
 
 def create_visualization(
     keypoint: np.ndarray,
+    task: str,
     true_label: int,
     probs: np.ndarray,
     sample_info: dict,
@@ -374,19 +438,25 @@ def create_visualization(
         tuple: (figure, animation)
     """
     NC, M, T, V, C = keypoint.shape
+    gap_elev = 45
+    gap_spin_deg_per_frame = 2.0
 
     keypoint_clip = keypoint[0, 0]
     num_frames = T
 
     probs_avg = probs.mean(axis=0)
-    topk = 10
+    num_classes = probs_avg.shape[0]
+    topk = min(10, num_classes)
     topk_probs, topk_indices = torch.from_numpy(probs_avg).topk(topk)
     topk_probs = topk_probs.numpy()
     topk_indices = topk_indices.numpy()
 
     fig = plt.figure(figsize=(14, 8))
+    title_suffix = ""
+    if sample_info.get("age_years") is not None:
+        title_suffix = f" | age {sample_info['age_years']:.1f} years"
     fig.suptitle(
-        f"ST-GCN++ Inference: {sample_info['frame_dir']}",
+        f"ST-GCN++ {task.title()} Inference: {sample_info['frame_dir']}{title_suffix}",
         fontsize=14,
         fontweight="bold",
     )
@@ -413,14 +483,14 @@ def create_visualization(
 
     ax_bar = fig.add_subplot(gs[0, 1])
     ax_bar.set_xlabel("Probability (%)")
-    ax_bar.set_title("Top-10 Predictions")
+    ax_bar.set_title(f"Top-{topk} Predictions")
 
     ax_gap = fig.add_subplot(gs[1, 1], projection="3d")
     ax_gap.set_title("GAP Features (256→16×16)", fontsize=10)
 
     gap_grid = gap.reshape(16, 16)
     bar3d_colored(ax_gap, gap_grid, _GAP_CMAP)
-    ax_gap.view_init(elev=28, azim=-50)
+    ax_gap.view_init(elev=gap_elev, azim=45)
 
     x_data = keypoint_clip[:, :, 0]
     y_data = keypoint_clip[:, :, 1]
@@ -474,10 +544,8 @@ def create_visualization(
         y_pos, topk_probs * 100, height=bar_height, color=colors, alpha=0.85
     )
     ax_bar.set_yticks(y_pos)
-    action_labels = [
-        NTU_ACTION_NAMES.get(int(idx), f"Unknown ({idx})") for idx in topk_indices
-    ]
-    ax_bar.set_yticklabels(action_labels, fontsize=8)
+    class_labels = [label_name(task, int(idx)) for idx in topk_indices]
+    ax_bar.set_yticklabels(class_labels, fontsize=8)
     ax_bar.set_xlim(0, 105)
     ax_bar.invert_yaxis()
 
@@ -576,6 +644,7 @@ def create_visualization(
         frame_slider.eventson = False
         frame_slider.set_val(frame)
         frame_slider.eventson = True
+        ax_gap.view_init(elev=gap_elev, azim=45 + frame * gap_spin_deg_per_frame)
 
         return update_frame(frame)
 
@@ -659,6 +728,12 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
 
+    if args.device.startswith("cuda") and not torch.cuda.is_available():
+        raise RuntimeError(
+            "CUDA was requested via --device, but torch.cuda.is_available() is False "
+            "in this environment."
+        )
+
     device = torch.device(args.device)
 
     data_path = Path(args.data)
@@ -691,6 +766,12 @@ def main() -> None:
     print(f"  True Label  : {sample_info['label']}")
     print(f"  Total Frames: {sample_info['total_frames']}")
 
+    sample_info["age_years"] = resolve_age_years(
+        sample_info["frame_dir"], Path("../data/Comp_v6_KLD01/train/ages")
+    )
+    if sample_info["age_years"] is not None:
+        print(f"  Age (years) : {sample_info['age_years']:.1f}")
+
     print("\nBuilding dataloader...")
     dataloader = build_dataloader(
         pkl_path=args.data,
@@ -704,32 +785,50 @@ def main() -> None:
     )
     print(f"  Dataset size: {len(dataloader.dataset)} samples")
 
+    print("\nInspecting checkpoint...")
+    _, state_dict = load_checkpoint_raw(str(ckpt_path), device)
+    task = detect_task_from_state_dict(state_dict)
+    print(f"  Detected task: {task}")
+
     print("\nBuilding model...")
-    model = STGCNpp(in_channels=3, num_classes=120)
+    model = build_model_for_task(task)
     model.to(device)
 
     print(f"\nLoading checkpoint: {ckpt_path}")
-    load_checkpoint(model, str(ckpt_path), device)
+    missing, unexpected, skipped = load_checkpoint(model, state_dict)
+    if missing:
+        print(
+            f"  [WARN] Missing keys ({len(missing)}): {missing[:5]}{'...' if len(missing) > 5 else ''}"
+        )
+    if unexpected:
+        print(
+            f"  [WARN] Unexpected keys ({len(unexpected)}): {unexpected[:5]}{'...' if len(unexpected) > 5 else ''}"
+        )
+    if skipped:
+        print(f"  [INFO] Skipped {len(skipped)} keys not belonging to backbone/head")
 
     print("\nRunning inference...")
     true_label, probs, keypoint, gap = inference_single(
         model, dataloader, device, args.clip
     )
 
-    topk = 5
+    topk = min(5, probs.shape[1])
     topk_probs, topk_indices = probs[0].topk(topk)
 
-    true_action = NTU_ACTION_NAMES.get(true_label, f"Unknown ({true_label})")
+    true_class_name = label_name(task, int(true_label))
 
     print("\n" + "=" * 60)
     print("INFERENCE RESULTS")
     print("=" * 60)
-    print(f'\nTrue Label: {true_label} - "{true_action}"')
+    print(f"\nTask      : {task}")
+    print(f'True Label: {true_label} - "{true_class_name}"')
+    if sample_info.get("age_years") is not None:
+        print(f"True Age  : {sample_info['age_years']:.1f} years")
     print("\nTop-5 Predictions:")
     for i, (prob, idx) in enumerate(zip(topk_probs, topk_indices), 1):
-        action_name = NTU_ACTION_NAMES.get(idx.item(), f"Unknown ({idx.item()})")
+        class_name = label_name(task, idx.item())
         marker = " <-- TRUE LABEL" if idx.item() == true_label else ""
-        print(f"  {i}. {action_name:<25} | {prob.item() * 100:>6.2f}%{marker}")
+        print(f"  {i}. {class_name:<25} | {prob.item() * 100:>6.2f}%{marker}")
     print("=" * 60)
 
     if not args.no_viz:
@@ -739,21 +838,24 @@ def main() -> None:
             num_clips=args.num_clips,
         )
         NC, M, T, V, C = viz_joints.shape
-        top_action = NTU_ACTION_NAMES.get(
-            int(topk_indices[0].item()), f"Unknown ({topk_indices[0].item()})"
-        )
+        top_prediction = label_name(task, int(topk_indices[0].item()))
         print("\nLaunching visualization...")
         print(f"  Modality : {args.modality} (visualization always shows joints)")
         print(f"  Skeleton : {V} joints, {T} frames")
         print(f"  GAP      : {gap.shape[0]} features")
-        print(f'  Top prediction: "{top_action}" ({topk_probs[0].item() * 100:.1f}%)')
-        print(f'  True label: "{true_action}"')
+        print(
+            f'  Top prediction: "{top_prediction}" ({topk_probs[0].item() * 100:.1f}%)'
+        )
+        print(f'  True label: "{true_class_name}"')
+        if sample_info.get("age_years") is not None:
+            print(f"  True age: {sample_info['age_years']:.1f} years")
         print("\nControls:")
         print("  - Drag slider to scrub through frames")
         print("  - Click Pause/Play to control animation")
         print("  - Close window to exit")
         fig, ani = create_visualization(
             keypoint=viz_joints,
+            task=task,
             true_label=true_label,
             probs=probs.cpu().numpy(),
             sample_info=sample_info,
