@@ -69,19 +69,16 @@ def estimate_axes(j):
     # Body-up: pelvis → neck
     up = normalize(j[:, 12, :] - j[:, 0, :])  # joints: 0=pelvis, 12=neck
 
-    # Body-right: L_hip → R_hip
-    right = normalize(j[:, 2, :] - j[:, 1, :])  # joints: 1=L_hip, 2=R_hip
+    # Body-left: R_hip → L_hip
+    left = normalize(j[:, 1, :] - j[:, 2, :])  # joints: 1=L_hip, 2=R_hip
 
-    # Body-forward: cross(up, right) — right-hand rule gives the facing direction
-    fwd = normalize(np.cross(up, right))
+    # Body-forward: cross(left, up) — right-hand rule gives the facing direction
+    fwd = normalize(np.cross(left, up))
 
-    # Re-derive right so all three axes are exactly orthonormal
-    lr = normalize(np.cross(up, fwd))
-
-    return up, fwd, lr
+    return up, fwd, left
 
 
-def rot_to_align(up, fwd):
+def rot_to_align(up, fwd, left):
     """Return rotation R such that R @ v maps world vectors to canonical frame.
 
     Canonical frame: +X = body-left, +Y = body-up, +Z = body-forward.
@@ -89,14 +86,14 @@ def rot_to_align(up, fwd):
     Args:
         up:  (T, 3) per-frame up vectors from estimate_axes.
         fwd: (T, 3) per-frame forward vectors from estimate_axes.
-
+        left: (T, 3) per-frame left vectors from estimate_axes.
     Returns:
         R: (3, 3) rotation matrix (world → canonical).
     """
     # Average over all frames and re-orthonormalize
     u = normalize(up.mean(axis=0), axis=-1).squeeze()
     f = normalize(fwd.mean(axis=0), axis=-1).squeeze()
-    l = normalize(np.cross(f, u), axis=-1).squeeze()
+    l = normalize(left.mean(axis=0), axis=-1).squeeze()  # Up x Forward = Left
 
     # Source frame: columns are the three body axes expressed in world space
     R_src = np.stack([l, u, f], axis=1)  # shape (3, 3), columns = [left, up, fwd]
@@ -147,8 +144,8 @@ def main():
             fps = float(d["fps"])
             trial = str(d["trial_name"]) if "trial_name" in d else fpath.stem.replace("_smpl_params", "")
             # estimate orientation & align
-            up, fwd, lr = estimate_axes(joints)
-            R = rot_to_align(up, fwd)  # (3,3)
+            up, fwd, left = estimate_axes(joints)
+            R = rot_to_align(up, fwd, left)  # (3,3)
             j = joints @ R.T  # (T,24,3)
             # root-center
             j = j - j[:, [0], :]  # pelvis at origin
@@ -192,7 +189,7 @@ def main():
                 body_mass_kg=mass_kg,
                 # canonicalization info
                 R=R.astype(np.float32),  # 3x3: original -> canonical ( +Y up, +Z fwd, +X left )
-                canon_axes=np.stack([lr.mean(0), up.mean(0), fwd.mean(0)], 0).astype(np.float32),
+                canon_axes=np.stack([left.mean(0), up.mean(0), fwd.mean(0)], 0).astype(np.float32),
                 pelvis_traj=pelvis_20.astype(np.float32),  # (T,3) pelvis path in canonical frame
             )
             print(f"[{subj}] wrote {out_file.name} (orig='{trial_raw}') (T={j22_20.shape[0]})")
