@@ -6,6 +6,7 @@ Convert fitted SMPL params to HumanML3D-style 22 SMPL joints at 20 FPS.
 - Canonicalize: root-centered; rotate so Up=+Y and Forward=+Z (estimated)
 - Resample to 20 FPS
 """
+
 import os, glob, json, argparse
 from pathlib import Path
 import numpy as np
@@ -50,45 +51,67 @@ def decimate_indices(T, src_fps, dst_fps):
     return np.clip(np.round(np.arange(0, T, step)).astype(int), 0, T - 1)
 
 
-def estimate_axes(j):  # (T,24,3)
-    # Up: pelvis->neck averaged direction
-    up = j[:, 12, :] - j[:, 0, :]  # neck - pelvis
-    up = up / (np.linalg.norm(up, axis=1, keepdims=True) + 1e-8)
-    # Left-right across hips (R_hip->L_hip)
-    lr = j[:, 1, :] - j[:, 2, :]
-    lr = lr / (np.linalg.norm(lr, axis=1, keepdims=True) + 1e-8)
-    # Forward = Up x LeftRight  (right-handed)
-    fwd = np.cross(lr, up)
-    fwd = fwd / (np.linalg.norm(fwd, axis=1, keepdims=True) + 1e-8)
-    # Orthonormalize
-    lr = np.cross(fwd, up)
-    lr = lr / (np.linalg.norm(lr, axis=1, keepdims=True) + 1e-8)
+def normalize(v, axis=-1):
+    return v / (np.linalg.norm(v, axis=axis, keepdims=True) + 1e-8)
+
+
+def estimate_axes(j):
+    """Estimate body-frame axes from joint positions.
+
+    Args:
+        j: SMPL joints (T, 24, 3) in any world-space coordinate system.
+
+    Returns:
+        up:  (T, 3) unit vectors pointing from pelvis toward neck.
+        fwd: (T, 3) unit vectors pointing in the body's facing direction.
+        lr:  (T, 3) unit vectors pointing toward body-left (orthonormalized).
+    """
+    # Body-up: pelvis → neck
+    up = normalize(j[:, 12, :] - j[:, 0, :])  # joints: 0=pelvis, 12=neck
+
+    # Body-right: L_hip → R_hip
+    right = normalize(j[:, 2, :] - j[:, 1, :])  # joints: 1=L_hip, 2=R_hip
+
+    # Body-forward: cross(up, right) — right-hand rule gives the facing direction
+    fwd = normalize(np.cross(up, right))
+
+    # Re-derive right so all three axes are exactly orthonormal
+    lr = normalize(np.cross(up, fwd))
+
     return up, fwd, lr
 
 
-def rot_to_align(u_src, f_src):
-    # Build mean frame
-    u = u_src.mean(axis=0)
-    u /= np.linalg.norm(u) + 1e-8
-    f = f_src.mean(axis=0)
-    f /= np.linalg.norm(f) + 1e-8
-    l = np.cross(f, u)
-    l /= np.linalg.norm(l) + 1e-8
-    R_src = np.stack([l, u, f], axis=1)  # columns: X(lr), Y(up), Z(fwd)
+def rot_to_align(up, fwd):
+    """Return rotation R such that R @ v maps world vectors to canonical frame.
 
-    # Target frame: +Y up, +Z fwd, +X left-right
-    R_tgt = np.eye(3)
-    # Columns are [X,Y,Z] = [lr, up, fwd] with +Y up and +Z fwd already
+    Canonical frame: +X = body-left, +Y = body-up, +Z = body-forward.
 
-    # Rotation mapping src->tgt: R = R_tgt * R_src^T
-    R = R_tgt @ R_src.T
-    return R
+    Args:
+        up:  (T, 3) per-frame up vectors from estimate_axes.
+        fwd: (T, 3) per-frame forward vectors from estimate_axes.
+
+    Returns:
+        R: (3, 3) rotation matrix (world → canonical).
+    """
+    # Average over all frames and re-orthonormalize
+    u = normalize(up.mean(axis=0), axis=-1).squeeze()
+    f = normalize(fwd.mean(axis=0), axis=-1).squeeze()
+    l = normalize(np.cross(f, u), axis=-1).squeeze()
+
+    # Source frame: columns are the three body axes expressed in world space
+    R_src = np.stack([l, u, f], axis=1)  # shape (3, 3), columns = [left, up, fwd]
+
+    # Target frame is the identity (canonical axes are the standard basis),
+    # so R = R_tgt @ R_src.T = R_src.T maps world → canonical.
+    return R_src.T
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument(
-        "--fits_dir", required=True, help="Path to fitted SMPL parameters (typically data/fitted_smpl_all_3/)"
+        "--fits_dir",
+        required=True,
+        help="Path to fitted SMPL parameters (typically data/fitted_smpl_all_3/)",
     )
     ap.add_argument(
         "--out_dir",
