@@ -59,10 +59,17 @@ JOINT_NAMES = [
 
 def load_data(npz_path, use_trajectory):
     """
-    Load and optionally reconstruct motion data from NPZ file.
+    Load and optionally reconstruct motion data from NPZ or NPY file.
+
+    NPZ files (HumanML3D pipeline output) contain labelled arrays:
+        'joints'      -- root-centered poses (T, 22, 3)
+        'pelvis_traj' -- optional global trajectory (T, 3)
+
+    NPY files are bare (T, 25, 3) arrays with no labels or trajectory.
+    --use-trajectory is silently ignored for NPY files.
 
     Args:
-        npz_path: Path to the NPZ file
+        npz_path: Path to the NPZ or NPY file
         use_trajectory: If True, reconstruct global motion using pelvis trajectory
 
     Returns:
@@ -70,12 +77,31 @@ def load_data(npz_path, use_trajectory):
 
     Raises:
         FileNotFoundError: If file doesn't exist
-        ValueError: If required data arrays are missing
+        ValueError: If required data arrays are missing or shape is unexpected
     """
     npz_path = Path(npz_path)
     if not npz_path.exists():
         raise FileNotFoundError(f"File not found: {npz_path}")
 
+    # --- NPY branch: bare (T, 25, 3) array ---
+    if npz_path.suffix == '.npy':
+        try:
+            motion_data = np.load(npz_path)
+        except Exception as e:
+            raise ValueError(f"Failed to load NPY file: {e}")
+
+        if motion_data.ndim != 3 or motion_data.shape[2] != 3:
+            raise ValueError(
+                f"Expected shape (T, J, 3) but got {motion_data.shape}"
+            )
+
+        if use_trajectory:
+            print("Warning: --use-trajectory is not supported for NPY files; ignoring.")
+
+        print(f"Loaded NPY file: shape {motion_data.shape} (bare array, no trajectory)")
+        return motion_data
+
+    # --- NPZ branch: labelled HumanML3D arrays ---
     try:
         data = np.load(npz_path)
     except Exception as e:
