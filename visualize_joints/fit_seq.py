@@ -15,22 +15,129 @@ from src.config import *
 # parsing argument
 parser = argparse.ArgumentParser()
 parser.add_argument("--batchSize", type=int, default=1, help="input batch size")
-parser.add_argument("--num_smplify_iters", type=int, default=100, help="num of smplify iters")
+parser.add_argument(
+    "--num_smplify_iters", type=int, default=100, help="num of smplify iters"
+)
 parser.add_argument("--cuda", action="store_true", help="enables cuda (default: CPU)")
 parser.add_argument("--gpu_ids", type=int, default=0, help="choose gpu ids")
 parser.add_argument("--num_joints", type=int, default=22, help="joint number")
-parser.add_argument("--joint_category", type=str, default="AMASS", help="use correspondence")
+parser.add_argument(
+    "--joint_category", type=str, default="AMASS", help="use correspondence"
+)
 parser.add_argument("--fix_foot", type=str, default="False", help="fix foot or not")
-parser.add_argument("--data_folder", type=str, default="./demo/demo_data/", help="data in the folder")
+parser.add_argument(
+    "--data_folder", type=str, default="./demo/demo_data/", help="data in the folder"
+)
 parser.add_argument(
     "--save_folder",
     type=str,
     default="./demo/demo_results/",
     help="results save folder",
 )
-parser.add_argument("--files", type=str, default="test_motion.npz", help="files use")
+parser.add_argument("--files", type=str, default="test_motion.npy", help="files use")
 opt = parser.parse_args()
 print(opt)
+
+
+def _to_time_joint_xyz(motion, num_joints):
+    motion = np.asarray(motion)
+
+    if motion.ndim == 3:
+        if motion.shape[1:] == (num_joints, 3):
+            return motion.astype(np.float32)
+        if motion.shape[:2] == (num_joints, 3):
+            return np.transpose(motion, (2, 0, 1)).astype(np.float32)
+        raise ValueError(f"Unsupported 3D motion shape: {motion.shape}")
+
+    if motion.ndim == 4:
+        if motion.shape[1:3] == (num_joints, 3):  # (N, 22, 3, T)
+            return np.transpose(motion[0], (2, 0, 1)).astype(np.float32)
+        if motion.shape[2:] == (num_joints, 3):  # (N, T, 22, 3)
+            return motion[0].astype(np.float32)
+        raise ValueError(f"Unsupported 4D motion shape: {motion.shape}")
+
+    raise ValueError(f"Unsupported motion rank: {motion.ndim} for shape {motion.shape}")
+
+
+def load_motion_file(full_path, num_joints):
+    loaded = np.load(full_path, allow_pickle=True)
+
+    data = None
+    pelvis_traj = None
+    fps = 20.0
+    source_fmt = None
+
+    if isinstance(loaded, np.lib.npyio.NpzFile):
+        source_fmt = "npz"
+        if "joints" in loaded.files:
+            data = np.asarray(loaded["joints"], dtype=np.float32)
+            pelvis_traj = (
+                np.asarray(loaded["pelvis_traj"], dtype=np.float32)
+                if "pelvis_traj" in loaded.files
+                else None
+            )
+            if "fps" in loaded.files:
+                fps = float(loaded["fps"])
+        elif "motion" in loaded.files:
+            data = _to_time_joint_xyz(loaded["motion"], num_joints)
+            if "fps" in loaded.files:
+                fps = float(loaded["fps"])
+        else:
+            raise ValueError(f"NPZ missing supported keys. Found: {list(loaded.files)}")
+        loaded.close()
+
+    elif isinstance(loaded, np.ndarray):
+        if loaded.dtype == object:
+            source_fmt = "pickle-npy"
+            payload = loaded.item() if loaded.shape == () else loaded.flat[0]
+            if not isinstance(payload, dict):
+                raise ValueError(
+                    f"Pickle npy payload must be dict, got {type(payload)}"
+                )
+            if "motion" not in payload:
+                raise ValueError(
+                    f"Pickle dict missing 'motion'. Found keys: {list(payload.keys())}"
+                )
+
+            data = _to_time_joint_xyz(payload["motion"], num_joints)
+
+            lengths = payload.get("lengths")
+            if lengths is not None:
+                seq_len = int(np.asarray(lengths).reshape(-1)[0])
+                data = data[:seq_len]
+
+            if "pelvis_traj" in payload:
+                pelvis_traj_raw = np.asarray(payload["pelvis_traj"], dtype=np.float32)
+                if pelvis_traj_raw.ndim == 3:
+                    pelvis_traj = pelvis_traj_raw[0]
+                elif pelvis_traj_raw.ndim == 2:
+                    pelvis_traj = pelvis_traj_raw
+
+            if "fps" in payload:
+                fps = float(payload["fps"])
+
+        else:
+            source_fmt = "plain-npy"
+            data = _to_time_joint_xyz(loaded, num_joints)
+
+    else:
+        raise ValueError(f"Unsupported loaded file type: {type(loaded)}")
+
+    if pelvis_traj is None:
+        pelvis_traj = np.zeros((data.shape[0], 3), dtype=np.float32)
+
+    pelvis_traj = np.asarray(pelvis_traj, dtype=np.float32)
+    if pelvis_traj.shape[0] < data.shape[0]:
+        pad = np.repeat(pelvis_traj[-1:], data.shape[0] - pelvis_traj.shape[0], axis=0)
+        pelvis_traj = np.concatenate([pelvis_traj, pad], axis=0)
+    elif pelvis_traj.shape[0] > data.shape[0]:
+        pelvis_traj = pelvis_traj[: data.shape[0]]
+
+    if pelvis_traj.ndim != 2 or pelvis_traj.shape[1] != 3:
+        raise ValueError(f"Invalid pelvis_traj shape: {pelvis_traj.shape}")
+
+    return data, pelvis_traj, fps, source_fmt
+
 
 # Load predefined models
 device = torch.device("cuda:" + str(opt.gpu_ids) if opt.cuda else "cpu")
@@ -69,14 +176,13 @@ smplify = SMPLify3D(
 purename = os.path.splitext(opt.files)[0]
 full_path = os.path.join(opt.data_folder, opt.files)
 
-npz_data = np.load(full_path)
-data = npz_data["joints"]  # (T, 22, 3) - root-centered
-pelvis_traj = npz_data["pelvis_traj"]  # (T, 3) - world-space trajectory
-fps = float(npz_data["fps"])
+data, pelvis_traj, fps, source_fmt = load_motion_file(full_path, opt.num_joints)
 
-print(f"✓ Loaded: {data.shape[0]} frames at {fps} FPS")
+print(f"✓ Loaded ({source_fmt}): {data.shape[0]} frames at {fps} FPS")
 print(f"  Pelvis trajectory: {pelvis_traj[0]} → {pelvis_traj[-1]}")
-print(f"  Distance: {np.linalg.norm(np.diff(pelvis_traj, axis=0), axis=1).sum():.2f}m\n")
+print(
+    f"  Distance: {np.linalg.norm(np.diff(pelvis_traj, axis=0), axis=1).sum():.2f}m\n"
+)
 
 # Create output directory
 dir_save = os.path.join(opt.save_folder, purename)
@@ -86,7 +192,7 @@ os.makedirs(dir_save, exist_ok=True)
 num_seqs = data.shape[0]
 
 for idx in range(num_seqs):
-    print(f"Frame {idx}/{num_seqs-1}")
+    print(f"Frame {idx}/{num_seqs - 1}")
 
     # Get root-centered joints and add world-space translation
     joints3d_centered = data[idx]  # (22, 3) - pelvis at origin
@@ -101,7 +207,7 @@ for idx in range(num_seqs):
         pred_pose[0, :] = init_mean_pose
         pred_cam_t[0, :] = torch.Tensor(world_root).to(device)
     else:
-        prev_param = joblib.load(os.path.join(dir_save, f"{idx-1:04d}.pkl"))
+        prev_param = joblib.load(os.path.join(dir_save, f"{idx - 1:04d}.pkl"))
         pred_betas[0, :] = torch.from_numpy(prev_param["beta"]).float()
         pred_pose[0, :] = torch.from_numpy(prev_param["pose"]).float()
         pred_cam_t[0, :] = torch.Tensor(world_root).to(device)
