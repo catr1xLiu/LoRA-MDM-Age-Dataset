@@ -134,7 +134,7 @@ smplmodel = smplx.create(
     model_type="smpl",
     gender="neutral",
     ext="pkl",
-    batch_size=opt.batch_size,
+    batch_size=1,
 ).to(device)
 
 # Load mean pose
@@ -170,8 +170,8 @@ os.makedirs(dir_save, exist_ok=True)
 # Joint confidence weights (constant across all frames)
 confidence_input = torch.ones(opt.num_joints)
 if opt.fix_foot == "True":
-    confidence_input[7] = 1.5   # Left ankle
-    confidence_input[8] = 1.5   # Right ankle
+    confidence_input[7] = 1.5  # Left ankle
+    confidence_input[8] = 1.5  # Right ankle
     confidence_input[10] = 1.5  # Left foot
     confidence_input[11] = 1.5  # Right foot
 conf_batch = confidence_input.to(device)
@@ -188,10 +188,9 @@ for batch_start in range(0, num_seqs, opt.batch_size):
     print(f"Batch {batch_idx}: frames {batch_start}–{batch_end - 1}")
 
     # Build batched joint tensor [B, num_joints, 3]
-    j3d_batch = torch.stack([
-        torch.tensor(data[i] + pelvis_traj[i], dtype=torch.float32)
-        for i in range(batch_start, batch_end)
-    ]).to(device)
+    j3d_batch = torch.stack(
+        [torch.tensor(data[i] + pelvis_traj[i], dtype=torch.float32) for i in range(batch_start, batch_end)]
+    ).to(device)
 
     # Initialize pose/betas from previous batch's last frame, or mean on first batch
     if batch_start == 0:
@@ -202,9 +201,7 @@ for batch_start in range(0, num_seqs, opt.batch_size):
         init_pose_batch = prev_last_pose.expand(actual_batch_size, -1).clone()
         init_betas_batch = prev_last_betas.expand(actual_batch_size, -1).clone()
 
-    init_cam_t_batch = torch.tensor(
-        pelvis_traj[batch_start:batch_end], dtype=torch.float32
-    ).to(device)  # [B, 3]
+    init_cam_t_batch = torch.tensor(pelvis_traj[batch_start:batch_end], dtype=torch.float32).to(device)  # [B, 3]
 
     # Phase 1: parallel initial fit across the batch
     (new_vertices, new_joints, new_pose, new_betas, new_cam_t, _) = smplify(
@@ -230,7 +227,7 @@ for batch_start in range(0, num_seqs, opt.batch_size):
         seq_ind=1,
         num_iters_override=opt.num_smplify_iters // 5,
         preserve_pose_override=preserve_for_phase2,
-        pose_preserve_weight=5.0 if prev_last_pose is not None else 0.0,
+        pose_preserve_weight=2.0 if prev_last_pose is not None else 0.0,
     )
 
     prev_last_pose = new_pose[-1:].detach()

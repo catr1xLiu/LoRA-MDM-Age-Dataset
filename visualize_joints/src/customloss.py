@@ -171,7 +171,7 @@ def body_fitting_loss_3d(
 
     # joint3d_loss = (joint_loss_weight ** 2) * gmof((model_joints + camera_translation) - j3d, sigma).sum(dim=-1)
 
-    joint3d_error = gmof((model_joints + camera_translation) - j3d, sigma)
+    joint3d_error = gmof((model_joints + camera_translation.unsqueeze(1)) - j3d, sigma)
 
     joint3d_loss_part = (joints3d_conf**2) * joint3d_error.sum(dim=-1)
     joint3d_loss = (joint_loss_weight**2) * joint3d_loss_part
@@ -201,7 +201,7 @@ def body_fitting_loss_3d(
     pose_preserve_loss = (pose_preserve_weight**2) * ((body_pose - preserve_pose) ** 2).sum(dim=-1)
 
     total_loss = (
-        joint3d_loss + pose_prior_loss + angle_prior_loss + shape_prior_loss + collision_loss + pose_preserve_loss
+        joint3d_loss.sum(dim=-1) + pose_prior_loss + angle_prior_loss + shape_prior_loss + collision_loss + pose_preserve_loss
     )
 
     return total_loss.sum()
@@ -212,7 +212,7 @@ def camera_fitting_loss_3d(model_joints, camera_t, camera_t_est, j3d, joints_cat
     """
     Loss function for camera optimization.
     """
-    model_joints = model_joints + camera_t
+    model_joints = model_joints + camera_t.unsqueeze(1)
     # # get the indexed four
     # op_joints = ['OP RHip', 'OP LHip', 'OP RShoulder', 'OP LShoulder']
     # op_joints_ind = [config.JOINT_MAP[joint] for joint in op_joints]
@@ -235,5 +235,5 @@ def camera_fitting_loss_3d(model_joints, camera_t, camera_t_est, j3d, joints_cat
     # Loss that penalizes deviation from depth estimate
     depth_loss = (depth_loss_weight**2) * (camera_t - camera_t_est) ** 2
 
-    total_loss = j3d_error_loss + depth_loss
+    total_loss = j3d_error_loss + depth_loss.unsqueeze(1)
     return total_loss.sum()
