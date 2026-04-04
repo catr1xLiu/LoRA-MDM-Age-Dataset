@@ -15,19 +15,13 @@ from src.config import *
 # parsing argument
 parser = argparse.ArgumentParser()
 parser.add_argument("--batchSize", type=int, default=1, help="input batch size")
-parser.add_argument(
-    "--num_smplify_iters", type=int, default=100, help="num of smplify iters"
-)
+parser.add_argument("--num_smplify_iters", type=int, default=100, help="num of smplify iters")
 parser.add_argument("--cuda", action="store_true", help="enables cuda (default: CPU)")
 parser.add_argument("--gpu_ids", type=int, default=0, help="choose gpu ids")
 parser.add_argument("--num_joints", type=int, default=22, help="joint number")
-parser.add_argument(
-    "--joint_category", type=str, default="AMASS", help="use correspondence"
-)
+parser.add_argument("--joint_category", type=str, default="AMASS", help="use correspondence")
 parser.add_argument("--fix_foot", type=str, default="False", help="fix foot or not")
-parser.add_argument(
-    "--data_folder", type=str, default="./demo/demo_data/", help="data in the folder"
-)
+parser.add_argument("--data_folder", type=str, default="./demo/demo_data/", help="data in the folder")
 parser.add_argument(
     "--save_folder",
     type=str,
@@ -71,11 +65,7 @@ def load_motion_file(full_path, num_joints):
         source_fmt = "npz"
         if "joints" in loaded.files:
             data = np.asarray(loaded["joints"], dtype=np.float32)
-            pelvis_traj = (
-                np.asarray(loaded["pelvis_traj"], dtype=np.float32)
-                if "pelvis_traj" in loaded.files
-                else None
-            )
+            pelvis_traj = np.asarray(loaded["pelvis_traj"], dtype=np.float32) if "pelvis_traj" in loaded.files else None
             if "fps" in loaded.files:
                 fps = float(loaded["fps"])
         elif "motion" in loaded.files:
@@ -91,13 +81,9 @@ def load_motion_file(full_path, num_joints):
             source_fmt = "pickle-npy"
             payload = loaded.item() if loaded.shape == () else loaded.flat[0]
             if not isinstance(payload, dict):
-                raise ValueError(
-                    f"Pickle npy payload must be dict, got {type(payload)}"
-                )
+                raise ValueError(f"Pickle npy payload must be dict, got {type(payload)}")
             if "motion" not in payload:
-                raise ValueError(
-                    f"Pickle dict missing 'motion'. Found keys: {list(payload.keys())}"
-                )
+                raise ValueError(f"Pickle dict missing 'motion'. Found keys: {list(payload.keys())}")
 
             data = _to_time_joint_xyz(payload["motion"], num_joints)
 
@@ -125,6 +111,7 @@ def load_motion_file(full_path, num_joints):
 
     if pelvis_traj is None:
         pelvis_traj = np.zeros((data.shape[0], 3), dtype=np.float32)
+        print("Warning: No pelvis trajectory found. Defaulting to zeros.")
 
     pelvis_traj = np.asarray(pelvis_traj, dtype=np.float32)
     if pelvis_traj.shape[0] < data.shape[0]:
@@ -169,6 +156,7 @@ smplify = SMPLify3D(
     batch_size=opt.batchSize,
     joints_category=opt.joint_category,
     num_iters=opt.num_smplify_iters,
+    use_lbfgs=False,
     device=device,
 )
 
@@ -180,9 +168,7 @@ data, pelvis_traj, fps, source_fmt = load_motion_file(full_path, opt.num_joints)
 
 print(f"✓ Loaded ({source_fmt}): {data.shape[0]} frames at {fps} FPS")
 print(f"  Pelvis trajectory: {pelvis_traj[0]} → {pelvis_traj[-1]}")
-print(
-    f"  Distance: {np.linalg.norm(np.diff(pelvis_traj, axis=0), axis=1).sum():.2f}m\n"
-)
+print(f"  Distance: {np.linalg.norm(np.diff(pelvis_traj, axis=0), axis=1).sum():.2f}m\n")
 
 # Create output directory
 dir_save = os.path.join(opt.save_folder, purename)
