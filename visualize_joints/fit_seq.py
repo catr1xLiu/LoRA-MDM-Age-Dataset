@@ -14,7 +14,7 @@ from src.config import *
 
 # parsing argument
 parser = argparse.ArgumentParser()
-parser.add_argument("--batchSize", type=int, default=1, help="input batch size")
+parser.add_argument("--batch_size", type=int, default=32, help="input batch size")
 parser.add_argument("--num_smplify_iters", type=int, default=100, help="num of smplify iters")
 parser.add_argument("--cuda", action="store_true", help="enables cuda (default: CPU)")
 parser.add_argument("--gpu_ids", type=int, default=0, help="choose gpu ids")
@@ -134,7 +134,7 @@ smplmodel = smplx.create(
     model_type="smpl",
     gender="neutral",
     ext="pkl",
-    batch_size=opt.batchSize,
+    batch_size=opt.batch_size,
 ).to(device)
 
 # Load mean pose
@@ -142,18 +142,11 @@ smpl_mean_file = SMPL_MEAN_FILE
 file = h5py.File(smpl_mean_file, "r")
 init_mean_pose = torch.from_numpy(file["pose"][:]).unsqueeze(0).float()
 init_mean_shape = torch.from_numpy(file["shape"][:]).unsqueeze(0).float()
-cam_trans_zero = torch.Tensor([0.0, 0.0, 0.0]).to(device)
-
-# Initialize tensors
-pred_pose = torch.zeros(opt.batchSize, 72).to(device)
-pred_betas = torch.zeros(opt.batchSize, 10).to(device)
-pred_cam_t = torch.zeros(opt.batchSize, 3).to(device)
-keypoints_3d = torch.zeros(opt.batchSize, opt.num_joints, 3).to(device)
 
 # Initialize SMPLify
 smplify = SMPLify3D(
     smplxmodel=smplmodel,
-    batch_size=opt.batchSize,
+    batch_size=opt.batch_size,
     joints_category=opt.joint_category,
     num_iters=opt.num_smplify_iters,
     use_lbfgs=False,
@@ -174,77 +167,97 @@ print(f"  Distance: {np.linalg.norm(np.diff(pelvis_traj, axis=0), axis=1).sum():
 dir_save = os.path.join(opt.save_folder, purename)
 os.makedirs(dir_save, exist_ok=True)
 
-# Process each frame
+# Joint confidence weights (constant across all frames)
+confidence_input = torch.ones(opt.num_joints)
+if opt.fix_foot == "True":
+    confidence_input[7] = 1.5   # Left ankle
+    confidence_input[8] = 1.5   # Right ankle
+    confidence_input[10] = 1.5  # Left foot
+    confidence_input[11] = 1.5  # Right foot
+conf_batch = confidence_input.to(device)
+
+# Process frames in batches
 num_seqs = data.shape[0]
+prev_last_pose = None
+prev_last_betas = None
 
-for idx in range(num_seqs):
-    print(f"Frame {idx}/{num_seqs - 1}")
+for batch_start in range(0, num_seqs, opt.batch_size):
+    batch_end = min(batch_start + opt.batch_size, num_seqs)
+    actual_batch_size = batch_end - batch_start
+    batch_idx = batch_start // opt.batch_size
+    print(f"Batch {batch_idx}: frames {batch_start}–{batch_end - 1}")
 
-    # Get root-centered joints and add world-space translation
-    joints3d_centered = data[idx]  # (22, 3) - pelvis at origin
-    world_root = pelvis_traj[idx]  # (3,) - world position
-    joints3d_world = joints3d_centered + world_root
+    # Build batched joint tensor [B, num_joints, 3]
+    j3d_batch = torch.stack([
+        torch.tensor(data[i] + pelvis_traj[i], dtype=torch.float32)
+        for i in range(batch_start, batch_end)
+    ]).to(device)
 
-    keypoints_3d[0, :, :] = torch.Tensor(joints3d_world).to(device).float()
-
-    # Initialize or load previous frame parameters
-    if idx == 0:
-        pred_betas[0, :] = init_mean_shape
-        pred_pose[0, :] = init_mean_pose
-        pred_cam_t[0, :] = torch.Tensor(world_root).to(device)
+    # Initialize pose/betas from previous batch's last frame, or mean on first batch
+    if batch_start == 0:
+        init_pose_batch = init_mean_pose.expand(actual_batch_size, -1).clone().to(device)
+        init_betas_batch = init_mean_shape.expand(actual_batch_size, -1).clone().to(device)
     else:
-        prev_param = joblib.load(os.path.join(dir_save, f"{idx - 1:04d}.pkl"))
-        pred_betas[0, :] = torch.from_numpy(prev_param["beta"]).float()
-        pred_pose[0, :] = torch.from_numpy(prev_param["pose"]).float()
-        pred_cam_t[0, :] = torch.Tensor(world_root).to(device)
+        assert prev_last_pose is not None and prev_last_betas is not None
+        init_pose_batch = prev_last_pose.expand(actual_batch_size, -1).clone()
+        init_betas_batch = prev_last_betas.expand(actual_batch_size, -1).clone()
 
-    # Joint confidence weights
-    confidence_input = torch.ones(opt.num_joints)
-    if opt.fix_foot == "True":
-        confidence_input[7] = 1.5  # Left ankle
-        confidence_input[8] = 1.5  # Right ankle
-        confidence_input[10] = 1.5  # Left foot
-        confidence_input[11] = 1.5  # Right foot
+    init_cam_t_batch = torch.tensor(
+        pelvis_traj[batch_start:batch_end], dtype=torch.float32
+    ).to(device)  # [B, 3]
 
-    # Fit SMPL to joints
-    (
-        new_opt_vertices,
-        new_opt_joints,
-        new_opt_pose,
-        new_opt_betas,
-        new_opt_cam_t,
-        new_opt_joint_loss,
-    ) = smplify(
-        pred_pose.detach(),
-        pred_betas.detach(),
-        pred_cam_t.detach(),
-        keypoints_3d,
-        conf_3d=confidence_input.to(device),
-        seq_ind=idx,
+    # Phase 1: parallel initial fit across the batch
+    (new_vertices, new_joints, new_pose, new_betas, new_cam_t, _) = smplify(
+        init_pose_batch,
+        init_betas_batch,
+        init_cam_t_batch,
+        j3d_batch,
+        conf_3d=conf_batch,
+        seq_ind=0 if batch_start == 0 else 1,
     )
 
-    # Generate and save mesh
-    outputp = smplmodel(
-        betas=new_opt_betas,
-        global_orient=new_opt_pose[:, :3],
-        body_pose=new_opt_pose[:, 3:],
-        transl=new_opt_cam_t,
-        return_verts=True,
-    )
-    mesh = trimesh.Trimesh(
-        vertices=outputp.vertices.detach().cpu().numpy().squeeze(),
-        faces=smplmodel.faces,
-        process=False,
-    )
-    mesh.export(os.path.join(dir_save, f"{idx:04d}.ply"))
+    # Phase 2: temporal refinement — anchor first frame of batch to last frame of previous batch
+    preserve_for_phase2 = new_pose[:, 3:].clone()  # [B, 69] body pose
+    if prev_last_pose is not None:
+        preserve_for_phase2[0] = prev_last_pose[0, 3:]
 
-    # Save parameters
-    param = {
-        "beta": new_opt_betas.detach().cpu().numpy(),
-        "pose": new_opt_pose.detach().cpu().numpy(),
-        "cam": new_opt_cam_t.detach().cpu().numpy(),
-        "root": new_opt_cam_t.detach().cpu().numpy().squeeze(),
-    }
-    joblib.dump(param, os.path.join(dir_save, f"{idx:04d}.pkl"), compress=3)
+    (new_vertices, new_joints, new_pose, new_betas, new_cam_t, _) = smplify(
+        new_pose,
+        new_betas,
+        new_cam_t,
+        j3d_batch,
+        conf_3d=conf_batch,
+        seq_ind=1,
+        num_iters_override=opt.num_smplify_iters // 5,
+        preserve_pose_override=preserve_for_phase2,
+        pose_preserve_weight=5.0 if prev_last_pose is not None else 0.0,
+    )
+
+    prev_last_pose = new_pose[-1:].detach()
+    prev_last_betas = new_betas[-1:].detach()
+
+    # Save per-frame results
+    for i, frame_idx in enumerate(range(batch_start, batch_end)):
+        outputp = smplmodel(
+            betas=new_betas[i : i + 1],
+            global_orient=new_pose[i : i + 1, :3],
+            body_pose=new_pose[i : i + 1, 3:],
+            transl=new_cam_t[i : i + 1],
+            return_verts=True,
+        )
+        mesh = trimesh.Trimesh(
+            vertices=outputp.vertices.detach().cpu().numpy().squeeze(),
+            faces=smplmodel.faces,
+            process=False,
+        )
+        mesh.export(os.path.join(dir_save, f"{frame_idx:04d}.ply"))
+
+        param = {
+            "beta": new_betas[i : i + 1].detach().cpu().numpy(),
+            "pose": new_pose[i : i + 1].detach().cpu().numpy(),
+            "cam": new_cam_t[i : i + 1].detach().cpu().numpy(),
+            "root": new_cam_t[i : i + 1].detach().cpu().numpy().squeeze(),
+        }
+        joblib.dump(param, os.path.join(dir_save, f"{frame_idx:04d}.pkl"), compress=3)
 
 print(f"\n✓ Saved {num_seqs} frames to {dir_save}")

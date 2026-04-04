@@ -3,6 +3,7 @@ import os, sys
 import pickle
 import smplx
 import numpy as np
+from typing import Union
 
 sys.path.append(os.path.dirname(__file__))
 from customloss import (
@@ -91,7 +92,9 @@ class SMPLify3D:
             print("NO SUCH JOINTS CATEGORY!")
 
     # ---- get the man function here ------
-    def __call__(self, init_pose, init_betas, init_cam_t, j3d, conf_3d=1.0, seq_ind=0):
+    def __call__(self, init_pose, init_betas, init_cam_t, j3d,
+                 conf_3d: Union[float, torch.Tensor] = 1.0, seq_ind=0,
+                 num_iters_override=None, preserve_pose_override=None, pose_preserve_weight=0.0):
         """Perform body fitting.
         Input:
             init_pose: SMPL pose estimate
@@ -148,7 +151,11 @@ class SMPLify3D:
         init_cam_t = guess_init_3d(model_joints, j3d, self.joints_category).detach()
         camera_translation = init_cam_t.clone()
 
-        preserve_pose = init_pose[:, 3:].detach().clone()
+        preserve_pose = (
+            preserve_pose_override.detach().clone()
+            if preserve_pose_override is not None
+            else init_pose[:, 3:].detach().clone()
+        )
         # -------------Step 1: Optimize camera translation and body orientation--------
         # Optimize only camera translation and body orientation
         body_pose.requires_grad = False
@@ -209,6 +216,8 @@ class SMPLify3D:
             betas.requires_grad = False
             body_opt_params = [body_pose, global_orient, camera_translation]
 
+        num_iters = num_iters_override if num_iters_override is not None else self.num_iters
+
         if self.use_lbfgs:
             body_optimizer = torch.optim.LBFGS(
                 body_opt_params, max_iter=self.num_iters, lr=self.step_size, line_search_fn="strong_wolfe"
@@ -246,7 +255,7 @@ class SMPLify3D:
         else:
             body_optimizer = torch.optim.Adam(body_opt_params, lr=self.step_size, betas=(0.9, 0.999))
 
-            for i in range(self.num_iters):
+            for i in range(num_iters):
                 smpl_output = self.smpl(global_orient=global_orient, body_pose=body_pose, betas=betas)
                 model_joints = smpl_output.joints
                 model_vertices = smpl_output.vertices
@@ -261,6 +270,7 @@ class SMPLify3D:
                     self.pose_prior,
                     joints3d_conf=conf_3d,
                     joint_loss_weight=600.0,
+                    pose_preserve_weight=pose_preserve_weight,
                     use_collision=self.use_collision,
                     model_vertices=model_vertices,
                     model_faces=self.model_faces,
