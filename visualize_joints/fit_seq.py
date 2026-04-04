@@ -149,7 +149,7 @@ smplify = SMPLify3D(
     batch_size=opt.batch_size,
     joints_category=opt.joint_category,
     num_iters=opt.num_smplify_iters,
-    use_lbfgs=False,
+    use_lbfgs=True,
     device=device,
 )
 
@@ -214,21 +214,23 @@ for batch_start in range(0, num_seqs, opt.batch_size):
     )
 
     # Phase 2: temporal refinement — anchor first frame of batch to last frame of previous batch
-    preserve_for_phase2 = new_pose[:, 3:].clone()  # [B, 69] body pose
-    if prev_last_pose is not None:
-        preserve_for_phase2[0] = prev_last_pose[0, 3:]
+    PHASE2_ENABLED = True
+    if PHASE2_ENABLED and batch_start > 0:
+        preserve_for_phase2 = new_pose[:, 3:].clone()  # [B, 69] body pose
+        if prev_last_pose is not None:
+            preserve_for_phase2[0] = prev_last_pose[0, 3:]
 
-    (new_vertices, new_joints, new_pose, new_betas, new_cam_t, _) = smplify(
-        new_pose,
-        new_betas,
-        new_cam_t,
-        j3d_batch,
-        conf_3d=conf_batch,
-        seq_ind=1,
-        num_iters_override=opt.num_smplify_iters // 5,
-        preserve_pose_override=preserve_for_phase2,
-        pose_preserve_weight=2.0 if prev_last_pose is not None else 0.0,
-    )
+        (new_vertices, new_joints, new_pose, new_betas, new_cam_t, _) = smplify(
+            new_pose,
+            new_betas,
+            new_cam_t,
+            j3d_batch,
+            conf_3d=conf_batch,
+            seq_ind=1,
+            num_iters_override=opt.num_smplify_iters // 5,
+            preserve_pose_override=preserve_for_phase2,
+            pose_preserve_weight=50.0 if prev_last_pose is not None else 0.0,
+        )
 
     prev_last_pose = new_pose[-1:].detach()
     prev_last_betas = new_betas[-1:].detach()
