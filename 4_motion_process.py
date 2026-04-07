@@ -437,25 +437,111 @@ def recover_from_ric(data, joints_num):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Extract HumanML3D motion features from joint position files.")
-    parser.add_argument("--data_dir", required=True, help="Input directory containing .npy or .npz joint files.")
-    parser.add_argument(
-        "--save_dir_joints", required=True, help="Output directory for reconstructed joint positions (new_joints)."
+    parser = argparse.ArgumentParser(
+        description="""
+Convert raw 3D joint position files (.npy/.npz, shape T×J×3) into the
+263-dimensional HumanML3D motion representation used by MDM and LoRA-MDM.
+
+Pipeline (per clip):
+  1. uniform_skeleton  — retarget source bone lengths to the canonical target
+                         skeleton (tgt_offsets), so all clips share identical
+                         proportions regardless of subject height/age.
+  2. process_file      — floor alignment, XZ centering, facing normalisation,
+                         then compute the 263-dim feature vector:
+                           4  root velocity (r_vel, lx, lz, ry)
+                          63  RIC joint positions  (21 joints × 3)
+                         126  cont-6d joint rotations (21 joints × 6)
+                          66  local joint velocities  (22 joints × 3)
+                           4  foot contact labels
+  3. recover_from_ric  — reconstruct global positions from the feature vector
+                         as a sanity check; NaN clips are skipped.
+
+Outputs
+  --save_dir_joints  : (T-1, 22, 3) reconstructed global positions — used for
+                       visualisation and as the 'new_joints' split in datasets.
+  --save_dir_vecs    : (T-1, 263) feature vectors — the actual training input
+                       for MDM / LoRA fine-tuning ('new_joint_vecs' split).
+
+Reference skeleton
+  uniform_skeleton needs a target offset (tgt_offsets) that matches the one
+  used when the base MDM model was trained on HumanML3D.  Any file from the
+  HumanML3D new_joints directory works as the reference because uniform_skeleton
+  normalised all of them to the same canonical proportions — verified to be
+  identical to floating-point precision (~1e-7) across the full dataset.
+  Point --reference_dir at HumanML3D/new_joints and leave --example_id at its
+  default (000021).  Do NOT use a file from the target dataset (e.g. van
+  Criekinge) as the reference — that would embed subject-specific proportions
+  and shift the feature vectors out of the space the base model expects.
+
+Usage — van Criekinge age dataset
+  python -m 4_motion_process \\
+    --data_dir        data/humanml3d_joints/ \\
+    --save_dir_joints data/new_joints/ \\
+    --save_dir_vecs   data/new_joint_vecs/ \\
+    --reference_dir   /path/to/LoRA-MDM/dataset/HumanML3D/new_joints \\
+    --recursive
+
+  The van Criekinge pipeline produces one .npz per trial inside per-subject
+  subdirectories (SUBJ01/, SUBJ02/, ...).  Use --recursive to discover them all.
+  Output filenames are flattened: SUBJ01/trial.npz -> SUBJ01_trial.npy.
+""",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
-        "--save_dir_vecs", required=True, help="Output directory for 263-dim feature vectors (new_joint_vecs)."
+        "--data_dir",
+        required=True,
+        help="Input directory containing .npy or .npz joint position files (shape T×J×3). "
+             "For .npz files the array must be stored under the key 'joints'.",
     )
     parser.add_argument(
-        "--example_id", default="000021", help="Filename stem of the reference skeleton example (no extension)."
+        "--save_dir_joints",
+        required=True,
+        help="Output directory for reconstructed global joint positions (T-1, J, 3). "
+             "Equivalent to the 'new_joints' split in HumanML3D.",
+    )
+    parser.add_argument(
+        "--save_dir_vecs",
+        required=True,
+        help="Output directory for 263-dim HumanML3D feature vectors (T-1, 263). "
+             "Equivalent to the 'new_joint_vecs' split — this is the direct training input.",
+    )
+    parser.add_argument(
+        "--example_id",
+        default="000021",
+        help="Filename stem (no extension) of the file used to derive the canonical target skeleton offsets. "
+             "Default '000021' matches the HumanML3D convention. Any file from HumanML3D/new_joints works "
+             "because all clips in that directory share identical bone lengths after uniform_skeleton.",
+    )
+    parser.add_argument(
+        "--reference_dir",
+        default=None,
+        help="Directory that contains the --example_id reference file. "
+             "Defaults to --data_dir when not set. "
+             "For datasets other than HumanML3D (e.g. van Criekinge) this MUST be set to the "
+             "HumanML3D new_joints directory so that the canonical 000021 skeleton proportions "
+             "are used, keeping the output feature vectors in the same space as the base model.",
+    )
+    parser.add_argument(
+        "--recursive",
+        action="store_true",
+        help="Walk --data_dir recursively to find .npy/.npz files. "
+             "Required when clips are organised into per-subject subdirectories "
+             "(as produced by 3_export_humanml3d.py for the van Criekinge dataset). "
+             "Subdirectory separators are flattened into underscores in output filenames.",
     )
     parser.add_argument(
         "--joints_num",
         type=int,
         default=22,
         choices=[21, 22],
-        help="Number of joints: 22 for HumanML3D/t2m, 21 for KIT.",
+        help="Number of skeleton joints. 22 for HumanML3D / t2m (default); 21 for KIT-ML.",
     )
-    parser.add_argument("--feet_thre", type=float, default=0.002, help="Foot contact velocity threshold.")
+    parser.add_argument(
+        "--feet_thre",
+        type=float,
+        default=0.002,
+        help="Velocity threshold (m/frame)² for foot contact detection. Default 0.002.",
+    )
     args = parser.parse_args()
 
     # Skeleton config
@@ -477,30 +563,49 @@ if __name__ == "__main__":
     os.makedirs(args.save_dir_joints, exist_ok=True)
     os.makedirs(args.save_dir_vecs, exist_ok=True)
 
+    reference_dir = args.reference_dir if args.reference_dir is not None else args.data_dir
+
     def _load_joints(path):
         if path.endswith(".npz"):
             return np.load(path, allow_pickle=True)["joints"]
         return np.load(path)
 
-    # Get target skeleton offsets from reference example
+    # Derive canonical target skeleton offsets from the reference example.
+    # Any HumanML3D new_joints file works — bone lengths are identical across
+    # the entire dataset (verified to ~1e-7 precision after uniform_skeleton).
     for ext in (".npy", ".npz"):
-        example_path = os.path.join(args.data_dir, args.example_id + ext)
+        example_path = os.path.join(reference_dir, args.example_id + ext)
         if os.path.exists(example_path):
             break
     else:
-        raise FileNotFoundError(f"Example file '{args.example_id}(.npy/.npz)' not found in {args.data_dir}")
+        raise FileNotFoundError(
+            f"Reference file '{args.example_id}(.npy/.npz)' not found in '{reference_dir}'. "
+            f"Set --reference_dir to the HumanML3D new_joints directory."
+        )
 
     example_data = _load_joints(example_path).reshape(-1, args.joints_num, 3)
     example_data = torch.from_numpy(example_data)
     tgt_skel = Skeleton(n_raw_offsets, kinematic_chain, "cpu")
     tgt_offsets = tgt_skel.get_offsets_joints(example_data[0])
 
-    source_list = [f for f in os.listdir(args.data_dir) if f.endswith(".npy") or f.endswith(".npz")]
+    if args.recursive:
+        source_list = [
+            os.path.relpath(os.path.join(root, f), args.data_dir)
+            for root, _, files in os.walk(args.data_dir)
+            for f in files
+            if f.endswith(".npy") or f.endswith(".npz")
+        ]
+    else:
+        source_list = [f for f in os.listdir(args.data_dir) if f.endswith(".npy") or f.endswith(".npz")]
+
     frame_num = 0
     for source_file in tqdm(source_list):
         source_path = os.path.join(args.data_dir, source_file)
         source_data = _load_joints(source_path)[:, : args.joints_num]
-        out_name = os.path.splitext(source_file)[0] + ".npy"
+        # Flatten subdirectory separators so all outputs land in a single directory.
+        # e.g. SUBJ01/trial_humanml3d_22joints.npz -> SUBJ01_trial_humanml3d_22joints.npy
+        out_name = source_file.replace(os.sep, "_").replace("/", "_")
+        out_name = os.path.splitext(out_name)[0] + ".npy"
         try:
             data, ground_positions, positions, l_velocity = process_file(source_data, args.feet_thre)
             rec_ric_data = recover_from_ric(torch.from_numpy(data).unsqueeze(0).float(), args.joints_num)
