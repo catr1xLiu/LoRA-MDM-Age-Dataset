@@ -94,7 +94,8 @@ class SMPLify3D:
     # ---- get the man function here ------
     def __call__(self, init_pose, init_betas, init_cam_t, j3d,
                  conf_3d: Union[float, torch.Tensor] = 1.0, seq_ind=0,
-                 num_iters_override=None, preserve_pose_override=None, pose_preserve_weight=0.0):
+                 num_iters_override=None, preserve_pose_override=None,
+                 pose_preserve_weight=0.0, skip_stage1=False):
         """Perform body fitting.
         Input:
             init_pose: SMPL pose estimate
@@ -144,62 +145,66 @@ class SMPLify3D:
         global_orient = init_pose[:, :3].detach().clone()
         betas = init_betas.detach().clone()
 
-        # use guess 3d to get the initial
-        smpl_output = self.smpl(global_orient=global_orient, body_pose=body_pose, betas=betas)
-        model_joints = smpl_output.joints
-
-        init_cam_t = guess_init_3d(model_joints, j3d, self.joints_category).detach()
-        camera_translation = init_cam_t.clone()
-
         preserve_pose = (
             preserve_pose_override.detach().clone()
             if preserve_pose_override is not None
             else init_pose[:, 3:].detach().clone()
         )
-        # -------------Step 1: Optimize camera translation and body orientation--------
-        # Optimize only camera translation and body orientation
-        body_pose.requires_grad = False
-        betas.requires_grad = False
-        global_orient.requires_grad = True
-        camera_translation.requires_grad = True
 
-        camera_opt_params = [global_orient, camera_translation]
+        if not skip_stage1:
+            # use guess 3d to get the initial camera translation
+            smpl_output = self.smpl(global_orient=global_orient, body_pose=body_pose, betas=betas)
+            model_joints = smpl_output.joints
 
-        if self.use_lbfgs:
-            camera_optimizer = torch.optim.LBFGS(
-                camera_opt_params, max_iter=self.num_iters, lr=self.step_size, line_search_fn="strong_wolfe"
-            )
-            for i in range(10):
+            init_cam_t = guess_init_3d(model_joints, j3d, self.joints_category).detach()
+            camera_translation = init_cam_t.clone()
 
-                def closure():
-                    camera_optimizer.zero_grad()
+            # -------------Step 1: Optimize camera translation and body orientation--------
+            body_pose.requires_grad = False
+            betas.requires_grad = False
+            global_orient.requires_grad = True
+            camera_translation.requires_grad = True
+
+            camera_opt_params = [global_orient, camera_translation]
+
+            if self.use_lbfgs:
+                camera_optimizer = torch.optim.LBFGS(
+                    camera_opt_params, max_iter=self.num_iters, lr=self.step_size, line_search_fn="strong_wolfe"
+                )
+                for _ in range(10):
+
+                    def closure():
+                        camera_optimizer.zero_grad()
+                        smpl_output = self.smpl(global_orient=global_orient, body_pose=body_pose, betas=betas)
+                        model_joints = smpl_output.joints
+
+                        loss = camera_fitting_loss_3d(
+                            model_joints, camera_translation, init_cam_t, j3d, self.joints_category
+                        )
+                        loss.backward()
+                        return loss
+
+                    camera_optimizer.step(closure)
+            else:
+                camera_optimizer = torch.optim.Adam(camera_opt_params, lr=self.step_size, betas=(0.9, 0.999))
+
+                for _ in range(20):
                     smpl_output = self.smpl(global_orient=global_orient, body_pose=body_pose, betas=betas)
                     model_joints = smpl_output.joints
 
                     loss = camera_fitting_loss_3d(
-                        model_joints, camera_translation, init_cam_t, j3d, self.joints_category
+                        model_joints,
+                        camera_translation,
+                        init_cam_t,
+                        j3d,
+                        self.joints_category,
                     )
+                    camera_optimizer.zero_grad()
                     loss.backward()
-                    return loss
-
-                camera_optimizer.step(closure)
+                    camera_optimizer.step()
         else:
-            camera_optimizer = torch.optim.Adam(camera_opt_params, lr=self.step_size, betas=(0.9, 0.999))
-
-            for i in range(20):
-                smpl_output = self.smpl(global_orient=global_orient, body_pose=body_pose, betas=betas)
-                model_joints = smpl_output.joints
-
-                loss = camera_fitting_loss_3d(
-                    model_joints,
-                    camera_translation,
-                    init_cam_t,
-                    j3d,
-                    self.joints_category,
-                )
-                camera_optimizer.zero_grad()
-                loss.backward()
-                camera_optimizer.step()
+            # Skip stage 1: camera already calibrated, use init_cam_t directly
+            camera_translation = init_cam_t.detach().clone()
 
         # Fix camera translation after optimizing camera
         # --------Step 2: Optimize body joints --------------------------
