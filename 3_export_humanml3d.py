@@ -147,19 +147,12 @@ def main():
             up, fwd, left = estimate_axes(joints)
             R = rot_to_align(up, fwd, left)  # (3,3)
             j = joints @ R.T  # (T,24,3)
-            # root-center
-            j = j - j[:, [0], :]  # pelvis at origin
             # select first 22 joints (HumanML3D uses first 22 SMPL joints)
             j22 = j[:, :22, :]  # (T,22,3)
 
             # resample to 20 FPS
             idx = decimate_indices(j22.shape[0], src_fps=fps, dst_fps=args.dst_fps)
             j22_20 = j22[idx]
-
-            # pelvis trajectory in the canonical frame (before root-centering)
-            pelvis_world = joints[:, 0, :]  # original coords, before rotation / centering
-            pelvis_world_canon = pelvis_world @ R.T
-            pelvis_20 = pelvis_world_canon[idx]
 
             # pull per-trial metadata written by the fitter
             meta_path = fpath.with_name(fpath.stem.replace("_smpl_params", "_smpl_metadata") + ".json")
@@ -190,7 +183,6 @@ def main():
                 # canonicalization info
                 R=R.astype(np.float32),  # 3x3: original -> canonical ( +Y up, +Z fwd, +X left )
                 canon_axes=np.stack([left.mean(0), up.mean(0), fwd.mean(0)], 0).astype(np.float32),
-                pelvis_traj=pelvis_20.astype(np.float32),  # (T,3) pelvis path in canonical frame
             )
             print(f"[{subj}] wrote {out_file.name} (orig='{trial_raw}') (T={j22_20.shape[0]})")
 
