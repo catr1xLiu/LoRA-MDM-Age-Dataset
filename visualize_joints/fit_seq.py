@@ -14,7 +14,8 @@ from src.config import *
 
 # parsing argument
 parser = argparse.ArgumentParser()
-parser.add_argument("--batch_size", type=int, default=32, help="input batch size")
+parser.add_argument("--batch_size", type=int, default=1, help="input batch size")
+parser.add_argument("--no_phase2", action="store_true", help="disable Jacobi temporal refinement (phase 2)")
 parser.add_argument("--num_smplify_iters", type=int, default=100, help="num of smplify iters")
 parser.add_argument("--cuda", action="store_true", help="enables cuda (default: CPU)")
 parser.add_argument("--gpu_ids", type=int, default=0, help="choose gpu ids")
@@ -30,6 +31,7 @@ parser.add_argument(
 )
 parser.add_argument("--files", type=str, default="test_motion.npy", help="files use")
 opt = parser.parse_args()
+do_phase2 = (opt.batch_size > 1) and not opt.no_phase2
 print(opt)
 
 
@@ -214,47 +216,49 @@ for batch_start in range(0, num_seqs, opt.batch_size):
     )
 
     # Phase 2: Jacobi-style temporal refinement
+    # Runs only when batch_size > 1 (or forced via --phase2 / disabled via --no_phase2).
     # Each macro iteration updates all frames in parallel.
     # Frame n uses frame n-1's result from the *previous* macro iteration as its anchor,
     # so the whole batch is independent within each iteration and can run in parallel.
     #
     # preserve_poses[0] = prev batch last frame (fixed across all macro iters)
     # preserve_poses[n] = phase2_pose[n-1] from the previous macro iteration
-    phase2_pose = new_pose.detach().clone()
-    phase2_betas = new_betas.detach().clone()
-    phase2_cam_t = new_cam_t.detach().clone()
+    if do_phase2:
+        phase2_pose = new_pose.detach().clone()
+        phase2_betas = new_betas.detach().clone()
+        phase2_cam_t = new_cam_t.detach().clone()
 
-    preserve_poses = phase2_pose[:, 3:].clone()  # [B, 69]: frame n anchored to frame n-1 (phase1)
-    if actual_batch_size > 1:
-        preserve_poses[1:] = phase2_pose[:-1, 3:]
-    if prev_last_pose is not None:
-        preserve_poses[0] = prev_last_pose[0, 3:]
-
-    num_macro_iters = max(1, opt.num_smplify_iters // 5)
-    for _ in range(num_macro_iters):
-        prev_iter_poses = phase2_pose.clone().detach()
-
-        (_, _, phase2_pose, phase2_betas, phase2_cam_t, _) = smplify(
-            phase2_pose,
-            phase2_betas,
-            phase2_cam_t,
-            j3d_batch,
-            conf_3d=conf_batch,
-            seq_ind=1,
-            num_iters_override=1,
-            preserve_pose_override=preserve_poses,
-            pose_preserve_weight=5.0,
-            skip_stage1=True,
-        )
-
-        # Shift anchors: each frame now looks at the previous iteration's neighbour
+        preserve_poses = phase2_pose[:, 3:].clone()  # [B, 69]: frame n anchored to frame n-1 (phase1)
         if actual_batch_size > 1:
-            preserve_poses[1:] = prev_iter_poses[:-1, 3:]
-        # preserve_poses[0] stays fixed throughout
+            preserve_poses[1:] = phase2_pose[:-1, 3:]
+        if prev_last_pose is not None:
+            preserve_poses[0] = prev_last_pose[0, 3:]
 
-    new_pose = phase2_pose
-    new_betas = phase2_betas
-    new_cam_t = phase2_cam_t
+        num_macro_iters = max(1, opt.num_smplify_iters // 5)
+        for _ in range(num_macro_iters):
+            prev_iter_poses = phase2_pose.clone().detach()
+
+            (_, _, phase2_pose, phase2_betas, phase2_cam_t, _) = smplify(
+                phase2_pose,
+                phase2_betas,
+                phase2_cam_t,
+                j3d_batch,
+                conf_3d=conf_batch,
+                seq_ind=1,
+                num_iters_override=1,
+                preserve_pose_override=preserve_poses,
+                pose_preserve_weight=5.0,
+                skip_stage1=True,
+            )
+
+            # Shift anchors: each frame now looks at the previous iteration's neighbour
+            if actual_batch_size > 1:
+                preserve_poses[1:] = prev_iter_poses[:-1, 3:]
+            # preserve_poses[0] stays fixed throughout
+
+        new_pose = phase2_pose
+        new_betas = phase2_betas
+        new_cam_t = phase2_cam_t
 
     prev_last_pose = new_pose[-1:].detach()
     prev_last_betas = new_betas[-1:].detach()
