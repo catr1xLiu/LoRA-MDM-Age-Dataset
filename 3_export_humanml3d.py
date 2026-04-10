@@ -3,7 +3,7 @@
 """
 Convert fitted SMPL params to HumanML3D-style 22 SMPL joints at 20 FPS.
 - Select first 22 SMPL joints
-- Canonicalize: root-centered; rotate so Up=+Y and Forward=+Z (estimated)
+- Canonicalize: rotate so Up=+Y and Forward=+Z (estimated); global root position preserved
 - Resample to 20 FPS
 """
 
