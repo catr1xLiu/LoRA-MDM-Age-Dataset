@@ -55,25 +55,53 @@ def normalize(v, axis=-1):
     return v / (np.linalg.norm(v, axis=axis, keepdims=True) + 1e-8)
 
 
-def estimate_axes(j):
+def estimate_axes(j, trim=10):
     """Estimate body-frame axes from joint positions.
 
+    Up is hardcoded to world +Y — step 2 guarantees this via vicon_to_smpl_coords.
+
+    Forward is estimated from the pelvis trajectory projected onto the XZ plane,
+    using the trimmed clip (first and last `trim` frames dropped) to avoid edge
+    noise from T-pose settling or marker dropout. This handles subjects walking
+    in any direction in the capture volume, which VC does not constrain.
+
+    Left is cross(up, fwd), keeping all three axes exactly orthonormal.
+
     Args:
-        j: SMPL joints (T, 24, 3) in any world-space coordinate system.
+        j:    SMPL joints (T, 24, 3) in world space with +Y up (post step 2).
+        trim: frames to drop from each end when estimating the walking direction.
 
     Returns:
-        up:  (T, 3) unit vectors pointing from pelvis toward neck.
-        fwd: (T, 3) unit vectors pointing in the body's facing direction.
-        lr:  (T, 3) unit vectors pointing toward body-left (orthonormalized).
+        up:   (T, 3) constant [0, 1, 0] — world vertical.
+        fwd:  (T, 3) constant unit vector in XZ — pelvis walking direction.
+        left: (T, 3) constant unit vector in XZ — 90° left of fwd.
     """
-    # Body-up: pelvis → neck
-    up = normalize(j[:, 12, :] - j[:, 0, :])  # joints: 0=pelvis, 12=neck
+    T = j.shape[0]
 
-    # Body-left: R_hip → L_hip
-    left = normalize(j[:, 1, :] - j[:, 2, :])  # joints: 1=L_hip, 2=R_hip
+    # Up: world +Y, constant
+    up = np.zeros((T, 3), dtype=np.float64)
+    up[:, 1] = 1.0
 
-    # Body-forward: cross(left, up) — right-hand rule gives the facing direction
-    fwd = normalize(np.cross(left, up))
+    # Forward: pelvis displacement over trimmed clip, projected onto XZ
+    t0 = min(trim, T // 4)          # graceful fallback for very short clips
+    t1 = max(T - trim, 3 * T // 4)
+    pelvis_disp = j[t1, 0, :] - j[t0, 0, :]   # joint 0 = pelvis
+    pelvis_disp[1] = 0.0                        # project onto XZ
+    fwd_vec = normalize(pelvis_disp[None, :])[0]
+
+    # Fallback: if pelvis barely moved (< 1 cm), use hip vector
+    if np.linalg.norm(pelvis_disp) < 0.01:
+        hip = j[:, 1, :] - j[:, 2, :]   # L_hip - R_hip
+        hip[:, 1] = 0.0
+        hip_mean = hip.mean(axis=0)
+        # fwd is 90° from lateral hip axis
+        fwd_vec = normalize(np.cross(normalize(hip_mean[None, :])[0], up[0]))[None, :][0]
+
+    fwd = np.tile(fwd_vec, (T, 1))
+
+    # Left: cross(up, fwd) — orthonormal by construction
+    left_vec = normalize(np.cross(up[0], fwd_vec)[None, :])[0]
+    left = np.tile(left_vec, (T, 1))
 
     return up, fwd, left
 
