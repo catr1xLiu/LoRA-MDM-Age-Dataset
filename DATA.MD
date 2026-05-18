@@ -16,7 +16,8 @@ data/
 ├── humanml3d_joints_4/              # HumanML3D format joints (~12MB) [generated]
 ├── Comp_v6_KLD01/                   # Motion features (~33MB) [generated]
 ├── smpl/                            # SMPL body models (~837MB)
-└── outputs/                         # Visualization outputs [generated]
+├── outputs/                         # Visualization outputs [generated]
+└── generated_clips_humanml3d/       # LoRA-generated motions (~92MB) [generated]
 ```
 
 **[generated]** indicates directories created by running the pipeline scripts.
@@ -142,6 +143,70 @@ These directories are created automatically when you run the pipeline:
   - `Mean.npy`, `Std.npy` normalization statistics
 - **outputs/**: Visualization outputs from `render_smpl_mesh.py`
 
+## LoRA-Generated Motion Clips (`generated_clips_humanml3d/`)
+
+Pre-generated motion clips produced by the LoRA-MDM inference pipeline using the trained **AgeEncoder** LoRA adapter (LoRA rank 12). Generated 2026-04-30.
+
+### Generation parameters
+
+| Parameter | Value |
+|-----------|-------|
+| LoRA checkpoint | `save/lora/AgeEncoder/` (AgeEncoder) |
+| LoRA rank | 12 |
+| Base model | MDM pre-trained on HumanML3D |
+| Age groups / tokens | `young` → `sks`, `mid` → `hta`, `old` → `oue` |
+| Frames per clip | 120 |
+| Samples per batch | 16 |
+| Batches per (prompt × age) | 64 |
+
+### Directory structure
+
+```
+generated_clips_humanml3d/
+├── motion1_walk_forward/
+│   ├── young/   batch_0000.npy … batch_0063.npy
+│   ├── mid/     batch_0000.npy … batch_0063.npy
+│   └── old/     batch_0000.npy … batch_0063.npy
+├── motion2_standup_and_walk/
+│   ├── young/   batch_0000.npy … batch_0063.npy
+│   ├── mid/     batch_0000.npy … batch_0063.npy
+│   └── old/     batch_0000.npy … batch_0063.npy
+└── motion3_running/
+    ├── young/   batch_0000.npy … batch_0063.npy
+    ├── mid/     batch_0000.npy … batch_0063.npy
+    └── old/     batch_0000.npy … batch_0063.npy
+```
+
+### Text prompts used
+
+| Directory | Prompt |
+|-----------|--------|
+| `motion1_walk_forward` | `"A person is walking forward in {token} style."` |
+| `motion2_standup_and_walk` | `"A person gets up from chair and starts walking in {token} style."` |
+| `motion3_running` | `"A person is running forward in {token} style."` |
+
+`{token}` is replaced with the age-group token at inference time (`sks` / `hta` / `oue`).
+
+### File format
+
+Each `batch_XXXX.npy` is a NumPy dict (load with `allow_pickle=True`):
+
+```python
+data = np.load('batch_0000.npy', allow_pickle=True).item()
+# data['motion']    — np.float32, shape (16, 22, 3, 120)
+#                     XYZ joint positions in metres, 22 joints × 3D × 120 frames
+#                     Decoded from HumanML3D feature space; ready for visualisation.
+# data['text']      — list[str], length 16, text prompt for each sample
+# data['lengths']   — np.int64, shape (16,), valid frame count per sample
+# data['batch_idx'] — int, sequential batch index
+```
+
+The `motion` array contains **decoded XYZ joint positions** (not 263-dim HML feature vectors). Joint ordering follows the HumanML3D 22-joint skeleton (`data_loaders/humanml/utils/paramUtil.py` in LoRA-MDM).
+
+### Coverage
+
+3 prompts × 3 age groups × 64 batches × 16 samples = **9 216 total generated clips** (~496 KB per batch file).
+
 ## Verifying Your Setup
 
 After downloading the required data, verify the structure:
@@ -196,7 +261,8 @@ Expected output should show the `van_criekinge_unprocessed_1/` and `smpl/` direc
 | fitted_smpl_all_3 | ~21MB | Generated |
 | humanml3d_joints_4 | ~12MB | Generated |
 | Comp_v6_KLD01 | ~33MB | Generated |
-| **Total** | **~3GB** | **~2.1GB raw + ~845MB generated** |
+| generated_clips_humanml3d | ~92MB | Generated |
+| **Total** | **~3.1GB** | **~2.1GB raw + ~937MB generated** |
 
 ## Additional Notes
 
