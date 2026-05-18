@@ -16,6 +16,7 @@ dependencies:
 
   # Visualization and plotting
   - matplotlib
+  - seaborn
   - opencv
 
   # 3D mesh processing and rendering
