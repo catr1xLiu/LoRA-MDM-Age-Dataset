@@ -8,6 +8,7 @@ import smplx
 import trimesh
 import h5py
 import multiprocessing
+import queue
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "src"))
 from src.smplify import SMPLify3D
@@ -198,7 +199,7 @@ def worker_fn(gpu_id, work_queue, save_queue, args):
         device = torch.device(f"cuda:{gpu_id}")
         batch_size = args.batch_size
         print(
-            f"[Worker GPU {gpu_id}] Initializing on {device}, batch_size={batch_size}"
+            f"[Worker GPU {gpu_id}] Initializing on {device}, batch_size={batch_size} clips"
         )
 
         smplmodel = smplx.create(
@@ -223,7 +224,7 @@ def worker_fn(gpu_id, work_queue, save_queue, args):
             batch_size=batch_size,
             joints_category=args.joint_category,
             num_iters=args.num_smplify_iters,
-            use_lbfgs=False,
+            use_lbfgs=args.use_lbfgs,
             device=device,
         )
 
@@ -238,106 +239,111 @@ def worker_fn(gpu_id, work_queue, save_queue, args):
         print(f"[Worker GPU {gpu_id}] Ready")
 
         while True:
-            item = work_queue.get()
-            if item is None:
+            batch_items = []
+            try:
+                # Get the first clip (blocking wait)
+                item = work_queue.get(timeout=3.0)
+                if item is None:
+                    work_queue.put(None)
+                else:
+                    batch_items.append(item)
+                    # Get up to batch_size - 1 additional clips (non-blocking)
+                    for _ in range(batch_size - 1):
+                        item = work_queue.get_nowait()
+                        if item is None:
+                            work_queue.put(None)
+                            break
+                        batch_items.append(item)
+            except queue.Empty:
+                pass
+
+            if not batch_items:
                 break
 
-            file_path, clip_idx_within_file, global_clip_idx, expected_frames = item
-
-            print(
-                f"[Worker GPU {gpu_id}] Processing clip {global_clip_idx:04d} from {os.path.basename(file_path)} (clip {clip_idx_within_file})"
-            )
-
-            try:
+            actual_bs = len(batch_items)
+            
+            clip_data = []
+            clip_pelvis = []
+            expected_frames_list = []
+            global_idx_list = []
+            
+            for item in batch_items:
+                file_path, clip_idx_within_file, global_clip_idx, expected_frames = item
                 data, pelvis_traj, fps, source_fmt = load_motion_file_for_clip(
                     file_path, args.num_joints, clip_idx=clip_idx_within_file
                 )
+                clip_data.append(data)
+                clip_pelvis.append(pelvis_traj)
+                expected_frames_list.append(data.shape[0])
+                global_idx_list.append(global_clip_idx)
 
-                if data.shape[0] != expected_frames:
-                    print(
-                        f"[Worker GPU {gpu_id}] Warning: expected {expected_frames} frames, got {data.shape[0]}"
-                    )
+            max_len = max(expected_frames_list)
+            print(f"[Worker GPU {gpu_id}] Processing batch of {actual_bs} clips (max length {max_len} frames)...")
 
-                clip_results = []
-                prev_last_pose = None
-                prev_last_betas = None
-
-                for batch_start in range(0, data.shape[0], batch_size):
-                    batch_end = min(batch_start + batch_size, data.shape[0])
-                    actual_bs = batch_end - batch_start
-
-                    j3d_batch = torch.stack(
-                        [
-                            torch.tensor(data[i] + pelvis_traj[i], dtype=torch.float32)
-                            for i in range(batch_start, batch_end)
-                        ]
-                    ).to(device)
-
-                    if batch_start == 0:
-                        init_pose_batch = (
-                            init_mean_pose.expand(actual_bs, -1).clone().to(device)
-                        )
-                        init_betas_batch = (
-                            init_mean_shape.expand(actual_bs, -1).clone().to(device)
-                        )
-                    else:
-                        init_pose_batch = prev_last_pose.expand(actual_bs, -1).clone()
-                        init_betas_batch = prev_last_betas.expand(actual_bs, -1).clone()
-
-                    init_cam_t_batch = torch.tensor(
-                        pelvis_traj[batch_start:batch_end], dtype=torch.float32
-                    ).to(device)
-
-                    new_vertices, _, new_pose, new_betas, new_cam_t, _ = smplify(
-                        init_pose_batch,
-                        init_betas_batch,
-                        init_cam_t_batch,
-                        j3d_batch,
-                        conf_3d=conf_batch,
-                        seq_ind=0 if batch_start == 0 else 1,
-                    )
-
-                    prev_last_pose = new_pose[-1:].detach()
-                    prev_last_betas = new_betas[-1:].detach()
-
-                    for i in range(actual_bs):
-                        frame_idx = batch_start + i
+            clip_results = [ [] for _ in range(actual_bs) ]
+            
+            pred_pose = torch.zeros(actual_bs, 72).to(device)
+            pred_betas = torch.zeros(actual_bs, 10).to(device)
+            pred_cam_t = torch.zeros(actual_bs, 3).to(device)
+            
+            for t in range(max_len):
+                keypoints_3d = torch.zeros(actual_bs, args.num_joints, 3).to(device)
+                
+                for j in range(actual_bs):
+                    frame_idx = min(t, expected_frames_list[j] - 1)
+                    joints3d_centered = clip_data[j][frame_idx]
+                    world_root = clip_pelvis[j][frame_idx]
+                    joints3d_world = joints3d_centered + world_root
+                    keypoints_3d[j] = torch.tensor(joints3d_world, dtype=torch.float32).to(device)
+                    
+                    if t == 0:
+                        pred_pose[j] = init_mean_pose[0]
+                        pred_betas[j] = init_mean_shape[0]
+                        pred_cam_t[j] = torch.tensor(world_root, dtype=torch.float32).to(device)
+                
+                (
+                    new_vertices,
+                    new_joints,
+                    new_pose,
+                    new_betas,
+                    new_cam_t,
+                    _,
+                ) = smplify(
+                    pred_pose.detach(),
+                    pred_betas.detach(),
+                    pred_cam_t.detach(),
+                    keypoints_3d,
+                    conf_3d=conf_batch,
+                    seq_ind=0 if t == 0 else 1,
+                )
+                
+                pred_pose = new_pose.detach()
+                pred_betas = new_betas.detach()
+                pred_cam_t = new_cam_t.detach()
+                
+                for j in range(actual_bs):
+                    if t < expected_frames_list[j]:
                         with torch.no_grad():
                             out = smplmodel(
-                                betas=new_betas[i : i + 1],
-                                global_orient=new_pose[i : i + 1, :3],
-                                body_pose=new_pose[i : i + 1, 3:],
-                                transl=new_cam_t[i : i + 1],
+                                betas=new_betas[j : j + 1],
+                                global_orient=new_pose[j : j + 1, :3],
+                                body_pose=new_pose[j : j + 1, 3:],
+                                transl=new_cam_t[j : j + 1],
                                 return_verts=True,
                             )
+                        
+                        clip_results[j].append({
+                            "pose": new_pose[j : j + 1].detach().cpu().numpy(),
+                            "betas": new_betas[j : j + 1].detach().cpu().numpy(),
+                            "cam_t": new_cam_t[j : j + 1].detach().cpu().numpy(),
+                            "vertices": out.vertices.detach().cpu().numpy().squeeze(),
+                        })
 
-                        clip_results.append(
-                            {
-                                "pose": new_pose[i : i + 1].detach().cpu().numpy(),
-                                "betas": new_betas[i : i + 1].detach().cpu().numpy(),
-                                "cam_t": new_cam_t[i : i + 1].detach().cpu().numpy(),
-                                "vertices": out.vertices.detach()
-                                .cpu()
-                                .numpy()
-                                .squeeze(),
-                            }
-                        )
-
+            for j in range(actual_bs):
                 save_queue.put(
-                    (global_clip_idx, clip_results, expected_frames, smpl_faces)
+                    (global_idx_list[j], clip_results[j], expected_frames_list[j], smpl_faces)
                 )
-                print(
-                    f"[Worker GPU {gpu_id}] Done clip {global_clip_idx:04d} ({data.shape[0]} frames)"
-                )
-
-            except Exception as e:
-                import traceback
-
-                print(
-                    f"[Worker GPU {gpu_id}] Error processing clip {global_clip_idx:04d}: {e}"
-                )
-                traceback.print_exc()
-                continue
+                print(f"[Worker GPU {gpu_id}] Done clip {global_idx_list[j]:04d} ({expected_frames_list[j]} frames)")
 
     except Exception as e:
         import traceback
@@ -353,10 +359,13 @@ def main():
         "--batch_size",
         type=int,
         default=16,
-        help="batch size per GPU (frames processed in parallel)",
+        help="batch size per GPU (clips processed in parallel)",
     )
     parser.add_argument(
-        "--num_smplify_iters", type=int, default=150, help="num of smplify iters"
+        "--num_smplify_iters", type=int, default=100, help="num of smplify iters"
+    )
+    parser.add_argument(
+        "--use_lbfgs", action="store_true", help="use LBFGS optimizer instead of Adam"
     )
     parser.add_argument("--num_joints", type=int, default=22, help="joint number")
     parser.add_argument(
@@ -378,8 +387,9 @@ def main():
     print(f"Data folder: {args.data_folder}")
     print(f"Save folder: {args.save_folder}")
     print(f"Num GPUs: {args.num_gpus}")
-    print(f"Batch size: {args.batch_size}")
+    print(f"Batch size (clips): {args.batch_size}")
     print(f"SMPLify iterations: {args.num_smplify_iters}")
+    print(f"Optimizer: {'LBFGS' if args.use_lbfgs else 'Adam'}")
     print(f"Joint category: {args.joint_category}")
     print(f"Fix foot: {args.fix_foot}")
     print()
