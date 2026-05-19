@@ -14,12 +14,14 @@ from pathlib import Path
 from analysis.constants import AGE_BINS
 from analysis.data import load_dataset_clips, load_generated_clips
 from analysis.metrics import ALL_SCALAR_METRICS
+from analysis.gait_cycle import (
+    plot_gait_cycle_angular_vel_by_age,
+    plot_gait_cycle_speed_by_age,
+)
 from analysis.results import (
     plot_combined_bars,
     plot_combined_violin,
     plot_correlation_matrix,
-    plot_gait_cycle_angular_vel_by_age,
-    plot_gait_cycle_speed_by_age,
     plot_joint_velocity_percentiles,
     plot_scatter_grid,
     save_summary_csv,
