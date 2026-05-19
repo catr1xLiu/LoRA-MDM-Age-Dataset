@@ -24,19 +24,19 @@ class MotionClip:
     Attributes:
         joints:     (T, 22, 3) joint positions; forward motion along +X, vertical +Y.
         timestamps: (T,) seconds elapsed from clip start.
-        strides:    List of (t_start, t_end) frame-index pairs, one per detected
-                    gait cycle (heel-strike → next ipsilateral heel-strike).
+        strides:    List of (t_start, t_end, foot) tuples, one per detected gait
+                    cycle.  foot is "L" or "R" (ipsilateral heel-strike pair).
         subject_id: Unique clip / subject identifier.
         source:     "dataset" or "generated".
         age:        Subject age in years.
-        age_group:  Discretised bin — "young", "mid", "old", or "unknown".
+        age_group:  Discretised bin — "young", "old", or "unknown".
         sex:        "M", "F", or "?" when unknown.
         condition:  Clinical label (e.g. "able_bodied", "stroke").
     """
 
-    joints:     np.ndarray              # (T, 22, 3)
-    timestamps: np.ndarray              # (T,) seconds
-    strides:    list[tuple[int, int]]   # [(t0, t1), ...]
+    joints:     np.ndarray                   # (T, 22, 3)
+    timestamps: np.ndarray                   # (T,) seconds
+    strides:    list[tuple[int, int, str]]   # [(t0, t1, "L"|"R"), ...]
     subject_id: str
     source:     str
     age:        float
@@ -55,6 +55,12 @@ class MotionClip:
         return len(self.strides)
 
     @property
+    def has_valid_stride_order(self) -> bool:
+        """True when every consecutive stride pair alternates feet (no L–L or R–R)."""
+        feet = [s[2] for s in self.strides]
+        return all(a != b for a, b in zip(feet[:-1], feet[1:]))
+
+    @property
     def duration(self) -> float:
         """Total clip duration in seconds."""
         return float(self.timestamps[-1] - self.timestamps[0])
@@ -71,17 +77,17 @@ class MotionClip:
         Returns:
             (L, 22, 3) where L = t1 − t0 + 1.
         """
-        t0, t1 = self.strides[i]
+        t0, t1, _ = self.strides[i]
         return self.joints[t0 : t1 + 1]
 
     def stride_duration(self, i: int) -> float:
         """Duration of stride i in seconds."""
-        t0, t1 = self.strides[i]
+        t0, t1, _ = self.strides[i]
         return float(self.timestamps[t1] - self.timestamps[t0])
 
     def stride_length(self, i: int) -> float:
         """Pelvis displacement along +X for stride i (metres)."""
-        t0, t1 = self.strides[i]
+        t0, t1, _ = self.strides[i]
         return float(abs(self.joints[t1, 0, 0] - self.joints[t0, 0, 0]))
 
     # ── Time normalisation ──────────────────────────────────────────────────

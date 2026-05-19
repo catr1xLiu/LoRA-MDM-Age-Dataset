@@ -55,7 +55,7 @@ class MotionClip:
     subject_id: str
     source:     str                     # "dataset" | "generated"
     age:        float
-    age_group:  str                     # "young" | "mid" | "old"
+    age_group:  str                     # "young" | "old"
     sex:        str
     condition:  str
 ```

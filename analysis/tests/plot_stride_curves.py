@@ -82,7 +82,7 @@ def plot_clip(
                 "R", fontsize=7, color="#C62828", ha="center", va="top")
 
     # Shade validated strides
-    for i, (t0, t1) in enumerate(strides):
+    for i, (t0, t1, _) in enumerate(strides):
         ax.axvspan(time[t0], time[t1], alpha=0.07, color="green",
                    label="Validated stride" if i == 0 else None)
 

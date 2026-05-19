@@ -39,7 +39,7 @@ class KneeROM(BaseMetric):
         Returns:
             Bilateral knee ROM in degrees, or np.nan if clip is too short.
         """
-        if clip.n_frames < 5:
+        if clip.n_frames < 5 or clip.n_strides < 1 or not clip.has_valid_stride_order:
             return np.nan
         j = clip.joints
         l = _joint_angle_deg(j[:, L_HIP], j[:, L_KNEE], j[:, L_ANKLE])
@@ -60,7 +60,7 @@ class HipROM(BaseMetric):
         Returns:
             Bilateral hip ROM in degrees, or np.nan if clip is too short.
         """
-        if clip.n_frames < 5:
+        if clip.n_frames < 5 or clip.n_strides < 1 or not clip.has_valid_stride_order:
             return np.nan
         j = clip.joints
         l = _joint_angle_deg(j[:, SPINE1], j[:, L_HIP], j[:, L_KNEE])

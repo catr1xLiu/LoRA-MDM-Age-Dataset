@@ -22,10 +22,11 @@ from scipy.stats import linregress
 
 from analysis.classes import BaseMetric, MotionClip
 from analysis.constants import (
-    AGE_BINS, GROUP_COLORS,
-    HEATMAP_LABELS, HEATMAP_ORDER,
+    AGE_BINS, FPS, GROUP_COLORS,
+    L_HIP, R_HIP,
+    L_FOOT, R_FOOT, L_ANKLE, R_ANKLE, L_KNEE, R_KNEE,
+    N_GAIT_PTS,
 )
-from analysis.metrics.velocity_map import VelocityMap
 
 warnings.filterwarnings("ignore")
 
@@ -387,53 +388,401 @@ def plot_correlation_matrix(
     print(f"  Saved: {out_path.name}")
 
 
-def plot_velocity_heatmap_grid(
-    clips_by_label: list[tuple[str, list[MotionClip]]],
+# ── Gait cycle line-plot helpers ───────────────────────────────────────────────
+
+_GAIT_PANELS: list[tuple[int, str]] = [
+    (L_FOOT,  "Left Foot"),
+    (L_ANKLE, "Left Ankle"),
+    (L_KNEE,  "Left Knee"),
+    (R_FOOT,  "Right Foot"),
+    (R_ANKLE, "Right Ankle"),
+    (R_KNEE,  "Right Knee"),
+]
+_PANEL_JOINTS: list[int] = [j for j, _ in _GAIT_PANELS]
+
+
+def _angle_at_vertex(p1: np.ndarray, p2: np.ndarray, p3: np.ndarray) -> np.ndarray:
+    """Included angle at p2 in radians; inputs (T, 3)."""
+    v1 = p1 - p2; v2 = p3 - p2
+    cos_a = np.sum(v1 * v2, axis=-1) / (
+        np.linalg.norm(v1, axis=-1) * np.linalg.norm(v2, axis=-1) + 1e-8
+    )
+    return np.arccos(np.clip(cos_a, -1.0, 1.0))
+
+
+def _joint_angle_series(joints: np.ndarray, j: int) -> np.ndarray:
+    """
+    Angle time series (radians) for a panel joint over a stride segment.
+
+    - Knee:  hip–knee–ankle included angle
+    - Ankle: knee–ankle–foot included angle
+    - Foot:  sagittal-plane pitch of ankle→foot segment from +Y (vertical)
+    """
+    if j == L_KNEE:
+        return _angle_at_vertex(joints[:, L_HIP],  joints[:, L_KNEE],  joints[:, L_ANKLE])
+    if j == R_KNEE:
+        return _angle_at_vertex(joints[:, R_HIP],  joints[:, R_KNEE],  joints[:, R_ANKLE])
+    if j == L_ANKLE:
+        return _angle_at_vertex(joints[:, L_KNEE], joints[:, L_ANKLE], joints[:, L_FOOT])
+    if j == R_ANKLE:
+        return _angle_at_vertex(joints[:, R_KNEE], joints[:, R_ANKLE], joints[:, R_FOOT])
+    foot_idx, ankle_idx = (L_FOOT, L_ANKLE) if j == L_FOOT else (R_FOOT, R_ANKLE)
+    seg = joints[:, foot_idx] - joints[:, ankle_idx]
+    return np.arctan2(seg[:, 0], seg[:, 1])   # sagittal pitch from +Y toward +X
+
+
+def _resample1d(signal: np.ndarray, n_out: int) -> np.ndarray:
+    return np.interp(
+        np.linspace(0.0, 1.0, n_out),
+        np.linspace(0.0, 1.0, len(signal)),
+        signal,
+    )
+
+
+def _clip_speed_curves(clip: MotionClip) -> Optional[np.ndarray]:
+    """
+    (N_GAIT_PTS, 6) mean joint speed (m/s) over the gait panels, averaged over strides.
+
+    Speed is computed at native FPS within each stride segment, then resampled
+    to the normalised gait cycle axis — giving true m/s, not a per-step artefact.
+    """
+    if not clip.strides or not clip.has_valid_stride_order:
+        return None
+    stride_curves = []
+    for t0, t1, _ in clip.strides:
+        seg = clip.joints[t0 : t1 + 1]                               # (L, 22, 3)
+        spd = np.linalg.norm(np.diff(seg, axis=0) * FPS, axis=-1)    # (L-1, 22) m/s
+        spd = np.concatenate([spd, spd[-1:]], axis=0)                 # (L, 22) pad last
+        stride_curves.append(np.stack(
+            [_resample1d(spd[:, j], N_GAIT_PTS) for j in _PANEL_JOINTS], axis=1
+        ))   # (N_GAIT_PTS, 6)
+    return np.mean(stride_curves, axis=0)                             # (N_GAIT_PTS, 6)
+
+
+def _clip_angular_vel_curves(clip: MotionClip) -> Optional[np.ndarray]:
+    """
+    (N_GAIT_PTS, 6) mean joint angular velocity (rad/s), averaged over strides.
+
+    Each joint angle is computed at native FPS, differentiated to rad/s, then
+    resampled to the normalised gait cycle axis.
+    """
+    if not clip.strides or not clip.has_valid_stride_order:
+        return None
+    stride_curves = []
+    for t0, t1, _ in clip.strides:
+        seg = clip.joints[t0 : t1 + 1]            # (L, 22, 3)
+        panel_curves = []
+        for j in _PANEL_JOINTS:
+            angles  = _joint_angle_series(seg, j)               # (L,) rad
+            ang_vel = np.abs(np.diff(angles)) * FPS              # (L-1,) rad/s magnitude
+            ang_vel = np.concatenate([ang_vel, ang_vel[-1:]])   # (L,) pad last
+            panel_curves.append(_resample1d(ang_vel, N_GAIT_PTS))
+        stride_curves.append(np.stack(panel_curves, axis=1))   # (N_GAIT_PTS, 6)
+    return np.mean(stride_curves, axis=0)                       # (N_GAIT_PTS, 6)
+
+
+def _plot_gait_cycle_by_age(
+    clip_curves: list[tuple[MotionClip, np.ndarray]],
+    ylabel: str,
     out_path: Path,
-    title: str = "Mean Joint Speed over Gait Cycle",
+    title: str,
+) -> None:
+    """2×3 median + Q1–Q3 band over gait cycle; one panel per entry in _GAIT_PANELS."""
+    pct = np.linspace(0, 100, N_GAIT_PTS)
+    fig, axes = plt.subplots(2, 3, figsize=(18, 6), squeeze=False)
+
+    for pi, (_, pname) in enumerate(_GAIT_PANELS):
+        ax = axes[pi // 3][pi % 3]
+        for gname, (lo, hi) in AGE_BINS.items():
+            color  = GROUP_COLORS[gname]
+            curves = np.array([
+                curve[:, pi] for c, curve in clip_curves if lo <= c.age < hi
+            ])
+            if len(curves) < 3:
+                continue
+            ax.plot(pct, np.median(curves, axis=0), color=color, lw=2, label=gname.capitalize())
+            ax.fill_between(pct,
+                            np.percentile(curves, 25, axis=0),
+                            np.percentile(curves, 75, axis=0),
+                            color=color, alpha=0.18)
+        ax.set_xlim(0, 100)
+        ax.set_xlabel("Gait Cycle (%)", fontsize=9)
+        ax.set_ylabel(ylabel, fontsize=9)
+        ax.set_title(pname, fontsize=10, fontweight="bold")
+        _ax_style(ax)
+
+    handles, labels = axes[0][0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc="upper right", fontsize=10, framealpha=0.9)
+    fig.suptitle(title, fontsize=13, fontweight="bold")
+    plt.tight_layout()
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  Saved: {out_path.name}")
+
+
+def plot_gait_cycle_speed_by_age(
+    clips: list[MotionClip],
+    out_path: Path,
+    title: str = "Joint Speed over Gait Cycle by Age Group",
 ) -> None:
     """
-    Grid of velocity heatmaps, one column per (label, clips) pair.
+    Median joint speed (m/s) over the normalised gait cycle for feet, ankles, and knees.
 
-    All panels share the same colour scale (98th-percentile maximum).
+    Speed is computed at native FPS per stride then resampled to the gait cycle axis.
+    """
+    curves = [(c, cv) for c in clips if (cv := _clip_speed_curves(c)) is not None]
+    _plot_gait_cycle_by_age(curves, "Joint Speed (m/s)", out_path, title)
+
+
+def plot_gait_cycle_angular_vel_by_age(
+    clips: list[MotionClip],
+    out_path: Path,
+    title: str = "Joint Angular Velocity over Gait Cycle by Age Group",
+) -> None:
+    """
+    Median joint angular velocity (rad/s) over the normalised gait cycle.
+
+    Angle definitions — Knee: hip–knee–ankle; Ankle: knee–ankle–foot;
+    Foot: sagittal pitch of ankle→foot segment from vertical.
+    Angular velocity computed at native FPS per stride then resampled.
+    """
+    curves = [(c, cv) for c in clips if (cv := _clip_angular_vel_curves(c)) is not None]
+    _plot_gait_cycle_by_age(curves, "Angular Velocity (rad/s)", out_path, title)
+
+
+def plot_combined_violin(
+    dataset_clips: list[MotionClip],
+    generated_clips: list[MotionClip],
+    metrics: list[BaseMetric],
+    out_path: Path,
+) -> None:
+    """
+    2×4 grid of violin plots; each panel compares dataset (opaque) and
+    generated (translucent, hatched) per age group for one metric.
 
     Args:
-        clips_by_label: List of (column_title, clips) pairs.
-        out_path:       Output PNG file path.
-        title:          Figure-level title.
+        dataset_clips:   Ground-truth clips.
+        generated_clips: LoRA-generated clips.
+        metrics:         8 scalar metric callables.
+        out_path:        Output PNG file path.
     """
-    vm_fn = VelocityMap()
-    panels: list[tuple[str, Optional[np.ndarray]]] = []
-    for label, clips in clips_by_label:
-        vmaps = [vm for c in clips if (vm := vm_fn(c)) is not None]
-        panels.append((label, np.mean(vmaps, axis=0) if vmaps else None))
+    from matplotlib.patches import Patch
 
-    valid = [(l, vm) for l, vm in panels if vm is not None]
-    if not valid:
-        print(f"  Skipped {out_path.name}: no velocity maps available")
-        return
+    ncols, nrows = 4, 2
+    W, OFFSET = 0.25, 0.20
+    fig, axes = plt.subplots(nrows, ncols, figsize=(ncols * 4.5, nrows * 5), squeeze=False)
+    axes_flat = axes.flatten()
 
-    vmax = max(float(np.percentile(vm, 98)) for _, vm in valid)
-    n    = len(panels)
-    fig, axes = plt.subplots(1, n, figsize=(11 * n, 8), sharey=True, squeeze=False)
-    im = None
-    for ax, (label, vm) in zip(axes[0], panels):
-        if vm is None:
-            ax.set_visible(False)
-            continue
-        data = vm[:, HEATMAP_ORDER].T           # (22, N_GAIT_PTS)
-        im = ax.imshow(data, aspect="auto", cmap="RdYlBu_r",
-                       extent=[0, 100, -0.5, 21.5], origin="lower", vmin=0, vmax=vmax)
-        ax.set_yticks(range(22))
-        ax.set_yticklabels(HEATMAP_LABELS, fontsize=7.5)
-        ax.set_xticks(range(0, 101, 10))
-        ax.set_xticklabels([f"{x}%" for x in range(0, 101, 10)], fontsize=7.5, rotation=45)
-        ax.set_xlabel("Normalized Gait Cycle (%)", fontsize=10)
-        ax.set_title(label, fontsize=11, fontweight="bold")
+    for ax, m in zip(axes_flat, metrics):
+        for gi, (gname, (lo, hi)) in enumerate(AGE_BINS.items()):
+            color   = GROUP_COLORS[gname]
+            ds_vals = [v for c in dataset_clips   if lo <= c.age < hi
+                       for v in [m(c)] if not np.isnan(v)]
+            gn_vals = [v for c in generated_clips if c.age_group == gname
+                       for v in [m(c)] if not np.isnan(v)]
 
-    if im is not None:
-        fig.colorbar(im, ax=list(axes[0]), shrink=0.55, label="Joint Speed (m/s)")
-    fig.suptitle(title, fontsize=13, fontweight="bold")
+            for data, xpos, alpha, ec in [
+                (ds_vals, gi - OFFSET, 0.80, color),
+                (gn_vals, gi + OFFSET, 0.35, "black"),
+            ]:
+                if len(data) < 3:
+                    continue
+                parts = ax.violinplot(data, positions=[xpos], widths=W * 2,
+                                     showmedians=True, showextrema=True)
+                for pc in parts["bodies"]:
+                    pc.set_facecolor(color); pc.set_alpha(alpha)
+                    pc.set_edgecolor(ec);    pc.set_linewidth(1.2)
+                for k in ("cmins", "cmaxes", "cbars"):
+                    if k in parts:
+                        parts[k].set_edgecolor(ec)
+                if "cmedians" in parts:
+                    parts["cmedians"].set_edgecolor("black")
+                    parts["cmedians"].set_linewidth(2.0)
+                    parts["cmedians"].set_zorder(5)
+
+        ax.set_xticks(range(len(AGE_BINS)))
+        ax.set_xticklabels([g.capitalize() for g in AGE_BINS], fontsize=10)
+        ax.set_ylabel(_ylabel(m), fontsize=9)
+        ax.set_title(m.title, fontsize=10, fontweight="bold")
+        _ax_style(ax)
+
+    for ax in axes_flat[len(metrics):]:
+        ax.set_visible(False)
+
+    handles = [
+        Patch(facecolor="#888888", alpha=0.80, label="Dataset"),
+        Patch(facecolor="#888888", alpha=0.35, edgecolor="black", label="Generated"),
+    ]
+    fig.legend(handles=handles, loc="upper right", fontsize=10, framealpha=0.9)
+    fig.suptitle("Dataset vs Generated — Gait Metric Distributions by Age Group",
+                 fontsize=13, fontweight="bold")
+    plt.tight_layout()
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  Saved: {out_path.name}")
+
+
+def plot_combined_bars(
+    dataset_clips: list[MotionClip],
+    generated_clips: list[MotionClip],
+    metrics: list[BaseMetric],
+    out_path: Path,
+) -> None:
+    """
+    2×4 grid of bar charts; each panel shows mean ± SD for dataset (solid) and
+    generated (hatched) per age group for one metric.
+
+    Args:
+        dataset_clips:   Ground-truth clips.
+        generated_clips: LoRA-generated clips.
+        metrics:         8 scalar metric callables.
+        out_path:        Output PNG file path.
+    """
+    from matplotlib.patches import Patch
+
+    ncols, nrows = 4, 2
+    x = np.arange(len(AGE_BINS))
+    w = 0.35
+    fig, axes = plt.subplots(nrows, ncols, figsize=(ncols * 4.5, nrows * 4), squeeze=False)
+    axes_flat = axes.flatten()
+
+    for ax, m in zip(axes_flat, metrics):
+        colors = [GROUP_COLORS[g] for g in AGE_BINS]
+        ds_m, ds_s, gn_m, gn_s = [], [], [], []
+        for gname, (lo, hi) in AGE_BINS.items():
+            ds = compute_stats([c for c in dataset_clips   if lo <= c.age < hi], m)
+            gn = compute_stats([c for c in generated_clips if c.age_group == gname], m)
+            ds_m.append(ds.mean); ds_s.append(0.0 if np.isnan(ds.std) else ds.std)
+            gn_m.append(gn.mean); gn_s.append(0.0 if np.isnan(gn.std) else gn.std)
+
+        ax.bar(x - w / 2, ds_m, w, yerr=ds_s, capsize=4,
+               color=colors, alpha=0.85, label="Dataset")
+        gn_bars = ax.bar(x + w / 2, gn_m, w, yerr=gn_s, capsize=4,
+                         color=colors, alpha=0.35, label="Generated")
+        for bar in gn_bars:
+            bar.set_edgecolor("black"); bar.set_linewidth(0.8); bar.set_hatch("///")
+
+        ax.set_xticks(x)
+        ax.set_xticklabels([g.capitalize() for g in AGE_BINS], fontsize=10)
+        ax.set_ylabel(_ylabel(m), fontsize=9)
+        ax.set_title(m.title, fontsize=10, fontweight="bold")
+        _ax_style(ax)
+
+    for ax in axes_flat[len(metrics):]:
+        ax.set_visible(False)
+
+    handles = [
+        Patch(facecolor="#888888", alpha=0.85, label="Dataset"),
+        Patch(facecolor="#888888", alpha=0.35, edgecolor="black", hatch="///", label="Generated"),
+    ]
+    fig.legend(handles=handles, loc="upper right", fontsize=10, framealpha=0.9)
+    fig.suptitle("Dataset vs Generated — Gait Metrics by Age Group",
+                 fontsize=13, fontweight="bold")
+    plt.tight_layout()
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  Saved: {out_path.name}")
+
+
+def _clip_velocity_percentiles(
+    clip: MotionClip,
+) -> Optional[tuple[float, float, float]]:
+    """
+    Compute (Q1, Median, Q3) of Cartesian joint speed across all gait-cycle frames.
+
+    Joints are evaluated over the time-normalised gait cycle so each clip
+    contributes equal weight regardless of the number of strides.
+
+    Args:
+        clip: MotionClip with pre-detected strides.
+
+    Returns:
+        (Q1, Median, Q3) in m/s, or None if no gait cycles are available.
+    """
+    cycles = clip.normalized_gait_cycle()          # (n, N_GAIT_PTS, 22, 3) or None
+    if cycles is None:
+        return None
+    speed = np.linalg.norm(np.diff(cycles, axis=1) * FPS, axis=-1)  # (n, N-1, 22)
+    flat  = speed.ravel()
+    return (float(np.percentile(flat, 25)),
+            float(np.percentile(flat, 50)),
+            float(np.percentile(flat, 75)))
+
+
+def plot_joint_velocity_percentiles(
+    dataset_clips: list[MotionClip],
+    generated_clips: list[MotionClip],
+    out_path: Path,
+) -> None:
+    """
+    Violin distribution of per-clip joint-speed Q1, Median, and Q3 over gait cycles.
+
+    For each clip the Q1, Median, and Q3 of all Cartesian joint speeds across
+    all normalised gait-cycle frames are treated as three independent statistics.
+    The resulting distributions are compared between dataset and generated clips,
+    broken down by age group.
+
+    Args:
+        dataset_clips:   Ground-truth clips.
+        generated_clips: LoRA-generated clips.
+        out_path:        Output PNG file path.
+    """
+    from matplotlib.patches import Patch
+
+    stat_labels = ["Q1 (25th pct)", "Median (50th pct)", "Q3 (75th pct)"]
+    W, OFFSET = 0.25, 0.20
+    fig, axes = plt.subplots(1, 3, figsize=(15, 5), squeeze=False)
+
+    for si, (ax, stat_label) in enumerate(zip(axes[0], stat_labels)):
+        for gi, (gname, (lo, hi)) in enumerate(AGE_BINS.items()):
+            color = GROUP_COLORS[gname]
+
+            ds_vals: list[float] = []
+            for c in dataset_clips:
+                if lo <= c.age < hi:
+                    p = _clip_velocity_percentiles(c)
+                    if p is not None:
+                        ds_vals.append(p[si])
+
+            gn_vals: list[float] = []
+            for c in generated_clips:
+                if c.age_group == gname:
+                    p = _clip_velocity_percentiles(c)
+                    if p is not None:
+                        gn_vals.append(p[si])
+
+            for data, xpos, alpha, ec in [
+                (ds_vals, gi - OFFSET, 0.80, color),
+                (gn_vals, gi + OFFSET, 0.35, "black"),
+            ]:
+                if len(data) < 3:
+                    continue
+                parts = ax.violinplot(data, positions=[xpos], widths=W * 2,
+                                     showmedians=True, showextrema=True)
+                for pc in parts["bodies"]:
+                    pc.set_facecolor(color); pc.set_alpha(alpha)
+                    pc.set_edgecolor(ec);    pc.set_linewidth(1.2)
+                for k in ("cmins", "cmaxes", "cbars"):
+                    if k in parts:
+                        parts[k].set_edgecolor(ec)
+                if "cmedians" in parts:
+                    parts["cmedians"].set_edgecolor("black")
+                    parts["cmedians"].set_linewidth(2.0)
+                    parts["cmedians"].set_zorder(5)
+
+        ax.set_xticks(range(len(AGE_BINS)))
+        ax.set_xticklabels([g.capitalize() for g in AGE_BINS], fontsize=10)
+        ax.set_ylabel("Joint Speed (m/s)", fontsize=9)
+        ax.set_title(stat_label, fontsize=11, fontweight="bold")
+        _ax_style(ax)
+
+    handles = [
+        Patch(facecolor="#888888", alpha=0.80, label="Dataset"),
+        Patch(facecolor="#888888", alpha=0.35, edgecolor="black", label="Generated"),
+    ]
+    fig.legend(handles=handles, loc="upper right", fontsize=10, framealpha=0.9)
+    fig.suptitle("Joint Speed Percentile Distributions over Gait Cycle",
+                 fontsize=13, fontweight="bold")
     plt.tight_layout()
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)

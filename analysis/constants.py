@@ -40,19 +40,16 @@ HEATMAP_LABELS: Final[list[str]] = [JOINT_NAMES[i] for i in HEATMAP_ORDER]
 
 AGE_BINS: Final[dict[str, tuple[int, int]]] = {
     "young": (21, 40),
-    "mid":   (40, 65),
     "old":   (65, 100),
 }
 
 GROUP_COLORS: Final[dict[str, str]] = {
     "young": "#2196F3",
-    "mid":   "#FF9800",
     "old":   "#F44336",
 }
 
 # Representative ages used for generated clips (midpoint of each bin)
 GROUP_REPRESENTATIVE_AGE: Final[dict[str, float]] = {
     "young": 30.0,
-    "mid":   52.0,
     "old":   75.0,
 }

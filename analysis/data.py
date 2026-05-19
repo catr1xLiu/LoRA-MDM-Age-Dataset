@@ -93,7 +93,7 @@ def _heel_strikes(joints: np.ndarray, foot_idx: int) -> np.ndarray:
     )
 
 
-def detect_strides(joints: np.ndarray) -> list[tuple[int, int]]:
+def detect_strides(joints: np.ndarray) -> list[tuple[int, int, str]]:
     """
     Detect all valid stride segments from bilateral heel-strike events.
 
@@ -105,16 +105,16 @@ def detect_strides(joints: np.ndarray) -> list[tuple[int, int]]:
         joints: (T, 22, 3) with forward motion already aligned to +X.
 
     Returns:
-        Time-sorted list of (t_start, t_end) frame-index pairs.
+        Time-sorted list of (t_start, t_end, foot) where foot is "L" or "R".
     """
-    strides: list[tuple[int, int]] = []
-    for foot in (L_FOOT, R_FOOT):
+    strides: list[tuple[int, int, str]] = []
+    for foot, label in ((L_FOOT, "L"), (R_FOOT, "R")):
         strikes = _heel_strikes(joints, foot)
         for t0, t1 in zip(strikes[:-1], strikes[1:]):
             dt = (int(t1) - int(t0)) * DT
             dl = abs(joints[int(t1), PELVIS, 0] - joints[int(t0), PELVIS, 0])
             if _MIN_STRIDE_T <= dt <= _MAX_STRIDE_T and _MIN_STRIDE_L <= dl <= _MAX_STRIDE_L:
-                strides.append((int(t0), int(t1)))
+                strides.append((int(t0), int(t1), label))
     return sorted(strides)
 
 
@@ -183,7 +183,7 @@ def load_dataset_clips(
             joints     = joints,
             timestamps = np.arange(joints.shape[0], dtype=float) * DT,
             strides    = detect_strides(joints),
-            subject_id = sid,
+            subject_id = Path(f).stem,
             source     = "dataset",
             age        = float(age),
             age_group  = _age_to_group(float(age)),

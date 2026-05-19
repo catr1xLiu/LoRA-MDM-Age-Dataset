@@ -16,7 +16,7 @@ class StrideTimeCV(BaseMetric):
         Returns:
             CV of stride times as a percentage, or np.nan if fewer than 3 strides.
         """
-        if clip.n_strides < 3:
+        if clip.n_strides < 3 or not clip.has_valid_stride_order:
             return np.nan
         times = np.array([clip.stride_duration(i) for i in range(clip.n_strides)])
         return float(np.std(times) / np.mean(times) * 100)
@@ -35,7 +35,7 @@ class StrideLengthCV(BaseMetric):
         Returns:
             CV of stride lengths as a percentage, or np.nan if fewer than 3 strides.
         """
-        if clip.n_strides < 3:
+        if clip.n_strides < 3 or not clip.has_valid_stride_order:
             return np.nan
         lengths = np.array([clip.stride_length(i) for i in range(clip.n_strides)])
         return float(np.std(lengths) / np.mean(lengths) * 100)

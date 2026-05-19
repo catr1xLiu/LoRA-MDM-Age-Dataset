@@ -17,7 +17,7 @@ class WalkingSpeed(BaseMetric):
         Returns:
             Average speed in m/s, or np.nan if the clip is too short.
         """
-        if clip.n_frames < MIN_CLIP_FRAMES:
+        if clip.n_frames < MIN_CLIP_FRAMES or clip.n_strides < 1 or not clip.has_valid_stride_order:
             return np.nan
         dist = abs(clip.joints[-1, PELVIS, 0] - clip.joints[0, PELVIS, 0])
         return float(dist / clip.duration)
@@ -36,7 +36,7 @@ class StrideLength(BaseMetric):
         Returns:
             Mean stride length in metres, or np.nan if no strides.
         """
-        if not clip.strides:
+        if clip.n_strides < 1 or not clip.has_valid_stride_order:
             return np.nan
         return float(np.mean([clip.stride_length(i) for i in range(clip.n_strides)]))
 
@@ -54,7 +54,7 @@ class StrideTime(BaseMetric):
         Returns:
             Mean stride time in seconds, or np.nan if no strides.
         """
-        if not clip.strides:
+        if clip.n_strides < 1 or not clip.has_valid_stride_order:
             return np.nan
         return float(np.mean([clip.stride_duration(i) for i in range(clip.n_strides)]))
 
@@ -72,7 +72,7 @@ class Cadence(BaseMetric):
         Returns:
             Cadence in strides/min, or np.nan if no strides.
         """
-        if not clip.strides:
+        if clip.n_strides < 1 or not clip.has_valid_stride_order:
             return np.nan
         mean_stride_time = np.mean([clip.stride_duration(i) for i in range(clip.n_strides)])
         return float(60.0 / mean_stride_time)
